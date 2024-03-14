@@ -22,6 +22,7 @@
 #define SOCK_MTP 100
 // Define the value of parameter T
 #define T 5
+#define P 0.3
 // Define the maximum number of active MTP sockets
 #define MAX_MTP_SOCKETS 25
 //max msg size
@@ -105,5 +106,7 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags,
 
 // Function to close an MTP socket
 int m_close(int sockfd);
+
+int dropMessage(float p);
 
 #endif /* MSOCKET_H */

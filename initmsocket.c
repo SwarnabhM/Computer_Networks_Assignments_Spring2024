@@ -138,6 +138,18 @@ void *thread_R() {
                 printf("***************\n");
                 printf("received msg on sockfd %d\n", i);
                 printf("***************\n");
+
+                if(dropMessage(P)){
+                    printf("***************\n");
+                    printf("dropped msg on sockfd %d\n", i);
+                    printf("***************\n");
+                    if(sem_post(SM_mutex)==-1){
+                        perror("sem_post");
+                        return NULL;
+                    }
+                    continue;
+                }
+
                 //CHECK IF CORRECT CLIENT IS SENDING -- done
                 if(client_addr.sin_addr.s_addr != SM[i].destination_addr.sin_addr.s_addr || client_addr.sin_port != SM[i].destination_addr.sin_port){
                     printf("***************\n");
@@ -244,6 +256,17 @@ void *thread_R() {
                         printf("***************\n");
                         printf("recvd data on sockfd %d, not in order and out of window, seq no %d\n", i, msg.header.seq_no);
                         printf("***************\n");
+
+                        Message ack;
+                        ack.header.msg_type = 'A';
+                        ack.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : SM[i].recv_window.next_seq_no-1;
+                        sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
+
+                        sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
+                        printf("***************\n");
+                        printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
+                        printf("***************\n");
+                        
                         if(sem_post(SM_mutex)==-1){
                             perror("sem_post");
                             return NULL;

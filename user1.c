@@ -17,24 +17,28 @@ int main(){
     // sleep(5);
 
     char buff[1024];
-    for(int i=0; i<25; i++){
-        memset(buff, 0, sizeof(buff));
-        sprintf(buff, "this is message no. %d from user 1", i);
-        int sends = m_sendto(sockfd, buff, strlen(buff)+1, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-        printf("sent: %d\n", sends);
+    for(int i=0; i<24; i=i+3){
+        for(int j=0; j<3; j++){
+            memset(buff, 0, sizeof(buff));
+            sprintf(buff, "this is message no. %d from user 1", i+j);
+            int sends = m_sendto(sockfd, buff, strlen(buff)+1, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+            printf("sent: %d\n", sends);
+        }
 
         struct sockaddr_in client_addr;
         memset(&client_addr, 0, sizeof(client_addr));
         int addrlen = sizeof(client_addr);
         memset(buff, 0, sizeof(buff));
+        int cnt = 0;
         while(1){
             sleep(1);
             int recvs = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr *)&client_addr, &addrlen);
             if(recvs!=0){
                 printf("recvs:%d\n", recvs);
                 if(recvs>0){
+                    cnt++;
                     printf("%s\n", buff);
-                    break;
+                    if(cnt==3)break;
                 }
                 else{
                     if(errno == ENOMSG) printf("nomsg\n");

@@ -1,5 +1,15 @@
 #include "msocket.h"
 
+int dropMessage(float p) {
+    float rand_val = (float)rand() / RAND_MAX; // Generate a random value between 0 and 1
+
+    if (rand_val < p) {
+        return 1; // Return true
+    } else {
+        return 0; // Return false
+    }
+}
+
 void cleanup(MTPSocketEntry *SM, SOCK_INFO *sock_info, sem_t *Sem1, sem_t *Sem2, sem_t *SM_mutex){
     if (SM != NULL) shmdt(SM);
     if (sock_info != NULL) shmdt(sock_info);
