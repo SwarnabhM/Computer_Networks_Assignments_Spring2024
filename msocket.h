@@ -31,6 +31,8 @@
 #define SENDER_MSG_BUFFER 10
 #define RECEIVER_MSG_BUFFER 5
 
+#define MAX_SILENCED_TIMEOUTS 5
+
 
 // Define the structure for a data message header
 typedef struct {

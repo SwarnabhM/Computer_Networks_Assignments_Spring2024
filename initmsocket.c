@@ -59,6 +59,10 @@ void *thread_R() {
         perror("sem_post");
         return NULL;
     }
+    int count_silence_timeout[MAX_MTP_SOCKETS];
+    for(int i=0; i<MAX_MTP_SOCKETS; i++){
+        count_silence_timeout[i] = 0;
+    }
     while (1) {
         // Clear the socket set
         fd_set temp = readfds;
@@ -83,6 +87,7 @@ void *thread_R() {
             max_sd = -1;
             for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
                 if(SM[i].socket_alloted){
+                    count_silence_timeout[i]++;
                     FD_SET(SM[i].udp_socket_id, &readfds);
                     if (SM[i].udp_socket_id > max_sd) {
                         max_sd = SM[i].udp_socket_id;
@@ -98,6 +103,18 @@ void *thread_R() {
                         printf("***************\n");
                         sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
                         SM[i].recv_window.nospace = 0;
+                    }
+                    else if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
+                        client_addr = SM[i].destination_addr;
+                        Message ack_msg;
+                        ack_msg.header.msg_type = 'A';
+                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
+                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
+                        printf("***************\n");
+                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
+                        printf("***************\n");
+                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
+                        count_silence_timeout[i] = 0;
                     }
                 }
             }
@@ -116,6 +133,7 @@ void *thread_R() {
                 return NULL;
             }
             if (FD_ISSET(SM[i].udp_socket_id, &temp)) {
+                
                 // Receive message from the UDP socket
 
                 ssize_t recv_len = recvfrom(SM[i].udp_socket_id, &msg, sizeof(Message), 0,
@@ -140,14 +158,32 @@ void *thread_R() {
                 printf("***************\n");
 
                 if(dropMessage(P)){
+                    count_silence_timeout[i]++;
                     printf("***************\n");
                     printf("dropped msg on sockfd %d\n", i);
                     printf("***************\n");
+
+                    if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
+                        client_addr = SM[i].destination_addr;
+                        Message ack_msg;
+                        ack_msg.header.msg_type = 'A';
+                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
+                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
+                        printf("***************\n");
+                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
+                        printf("***************\n");
+                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
+                        count_silence_timeout[i] = 0;
+                    }
+
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
                         return NULL;
                     }
                     continue;
+                }
+                else{
+                    count_silence_timeout[i] = 0;
                 }
 
                 //CHECK IF CORRECT CLIENT IS SENDING -- done
@@ -316,6 +352,23 @@ void *thread_R() {
                     return NULL;
                 }
             }else{
+                if(SM[i].socket_alloted){
+                    count_silence_timeout[i]++;
+
+                    if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
+                        client_addr = SM[i].destination_addr;
+                        Message ack_msg;
+                        ack_msg.header.msg_type = 'A';
+                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
+                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
+                        printf("***************\n");
+                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
+                        printf("***************\n");
+                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
+                        count_silence_timeout[i] = 0;
+                    }
+                }
+
                 if(sem_post(SM_mutex)==-1){
                     perror("sem_post");
                     return NULL;
