@@ -22,7 +22,7 @@
 #define SOCK_MTP 100
 // Define the value of parameter T
 #define T 5
-#define P 0.3
+#define P 0.5
 // Define the maximum number of active MTP sockets
 #define MAX_MTP_SOCKETS 25
 //max msg size
@@ -36,7 +36,7 @@
 
 // Define the structure for a data message header
 typedef struct {
-    char msg_type; //'D' for data, 'A' for acknowledgment message
+    char msg_type; //'D' for data, 'A' for acknowledgment, 'P' for Probe messages
     int seq_no;
 }MessageHeader;
 

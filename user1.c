@@ -17,8 +17,8 @@ int main(){
     // sleep(5);
 
     char buff[1024];
-    for(int i=0; i<24; i=i+3){
-        for(int j=0; j<3; j++){
+    for(int i=0; i<32; i=i+8){
+        for(int j=0; j<8; j++){
             memset(buff, 0, sizeof(buff));
             sprintf(buff, "this is message no. %d from user 1", i+j);
             int sends = m_sendto(sockfd, buff, strlen(buff)+1, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
@@ -38,7 +38,7 @@ int main(){
                 if(recvs>0){
                     cnt++;
                     printf("%s\n", buff);
-                    if(cnt==3)break;
+                    if(cnt==8)break;
                 }
                 else{
                     if(errno == ENOMSG) printf("nomsg\n");

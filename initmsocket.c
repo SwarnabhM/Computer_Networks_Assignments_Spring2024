@@ -7,6 +7,13 @@ sem_t *Sem1;
 sem_t *Sem2;
 sem_t* SM_mutex;
 
+typedef struct{
+    int flag;
+    time_t last_time;
+    int ack_seq_no;
+} Persistence_Timer_;
+Persistence_Timer_ persistence_timer[MAX_MTP_SOCKETS];
+
 // Signal handler for SIGINT (Ctrl+C)
 void signal_handler(int signum) {
     printf("\nReceived Ctrl+C. Detaching shared memory and quitting.\n");
@@ -59,10 +66,7 @@ void *thread_R() {
         perror("sem_post");
         return NULL;
     }
-    int count_silence_timeout[MAX_MTP_SOCKETS];
-    for(int i=0; i<MAX_MTP_SOCKETS; i++){
-        count_silence_timeout[i] = 0;
-    }
+    
     while (1) {
         // Clear the socket set
         fd_set temp = readfds;
@@ -87,7 +91,7 @@ void *thread_R() {
             max_sd = -1;
             for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
                 if(SM[i].socket_alloted){
-                    count_silence_timeout[i]++;
+                    
                     FD_SET(SM[i].udp_socket_id, &readfds);
                     if (SM[i].udp_socket_id > max_sd) {
                         max_sd = SM[i].udp_socket_id;
@@ -104,18 +108,7 @@ void *thread_R() {
                         sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
                         SM[i].recv_window.nospace = 0;
                     }
-                    else if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
-                        client_addr = SM[i].destination_addr;
-                        Message ack_msg;
-                        ack_msg.header.msg_type = 'A';
-                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
-                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
-                        printf("***************\n");
-                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
-                        printf("***************\n");
-                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
-                        count_silence_timeout[i] = 0;
-                    }
+
                 }
             }
             if (sem_post(SM_mutex) == -1) {
@@ -138,13 +131,7 @@ void *thread_R() {
 
                 ssize_t recv_len = recvfrom(SM[i].udp_socket_id, &msg, sizeof(Message), 0,
                                             (struct sockaddr *)&client_addr, &addr_len);
-                if(SM[i].recv_window.nospace){
-                    if(sem_post(SM_mutex)==-1){
-                        perror("sem_post");
-                        return NULL;
-                    }
-                    continue;
-                }
+
                 if (recv_len < 0) {
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
@@ -158,32 +145,15 @@ void *thread_R() {
                 printf("***************\n");
 
                 if(dropMessage(P)){
-                    count_silence_timeout[i]++;
                     printf("***************\n");
                     printf("dropped msg on sockfd %d\n", i);
                     printf("***************\n");
-
-                    if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
-                        client_addr = SM[i].destination_addr;
-                        Message ack_msg;
-                        ack_msg.header.msg_type = 'A';
-                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
-                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
-                        printf("***************\n");
-                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
-                        printf("***************\n");
-                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
-                        count_silence_timeout[i] = 0;
-                    }
 
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
                         return NULL;
                     }
                     continue;
-                }
-                else{
-                    count_silence_timeout[i] = 0;
                 }
 
                 //CHECK IF CORRECT CLIENT IS SENDING -- done
@@ -201,7 +171,7 @@ void *thread_R() {
                 // You need to handle ACK messages and data messages separately
                 // Update swnd, send ACKs, and store data messages in the receive buffer
                 if(msg.header.msg_type=='D'){   
-                    if(msg.header.seq_no == SM[i].recv_window.next_seq_no){
+                    if(msg.header.seq_no == SM[i].recv_window.next_seq_no && SM[i].recv_window.window_size>0){
                         int idx = SM[i].recv_window.index_to_write;
                         SM[i].recv_window.recv_buff[idx].ack_no = msg.header.seq_no;
                         strcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg);
@@ -217,6 +187,7 @@ void *thread_R() {
                         int last_in_order = msg.header.seq_no;
                         int next_idx_to_write = SM[i].recv_window.index_to_write;
                         for(int k=1; k<RECEIVER_MSG_BUFFER; k++){
+                            if(SM[i].recv_window.window_size==0)break;
                             int new_idx = (SM[i].recv_window.index_to_write+k)%RECEIVER_MSG_BUFFER;
                             if(SM[i].recv_window.recv_buff[new_idx].ack_no==-1){
                                 break;
@@ -225,6 +196,8 @@ void *thread_R() {
                             if(SM[i].recv_window.recv_buff[new_idx].ack_no!=next_exp_seq_no)break;
                             last_in_order = next_exp_seq_no;
                             next_idx_to_write = new_idx;
+                            SM[i].recv_window.window_size--;
+                            if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
                         }
                         SM[i].recv_window.index_to_write = (next_idx_to_write+1)%RECEIVER_MSG_BUFFER;
                         SM[i].recv_window.next_seq_no = (last_in_order==15)? 1 : (last_in_order+1);
@@ -261,13 +234,14 @@ void *thread_R() {
                     }
                     if(inWindow){
                         printf("***************\n");
-                        printf("recvd data no sockfd %d, not in order but in window, %d idx, %d seq no\n", i, new_idx, msg.header.seq_no);
+                        printf("recvd data on sockfd %d, not in order but in window, %d idx, %d seq no\n", i, new_idx, msg.header.seq_no);
                         printf("***************\n");
                         if(SM[i].recv_window.recv_buff[new_idx].ack_no!=msg.header.seq_no){
                             SM[i].recv_window.recv_buff[new_idx].ack_no = msg.header.seq_no;
                             strcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg);
-                            SM[i].recv_window.window_size--;
-                            if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
+                            // NOT DECREMENTING THE WINDOW SIZE WHEN RECEIVED AN 'IN WINDOW BUT OUT OF ORDER' MESSAGE !!! CHECK !!!
+                            // SM[i].recv_window.window_size--;
+                            // if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
                             printf("***************\n");
                             printf("sockfd %d, data written at idx %d, seq no %d, window size %d\n", i, new_idx, msg.header.seq_no, SM[i].recv_window.window_size);
                             printf("***************\n");
@@ -340,6 +314,14 @@ void *thread_R() {
                     printf("***************\n");
                     printf("sockfd %d swnd window size update %d\n", i, SM[i].send_window.window_size);
                     printf("***************\n");
+                    if (SM[i].send_window.window_size>0){
+                        persistence_timer[i].flag = 0;
+                    }
+                    if(SM[i].send_window.window_size==0){
+                        if(persistence_timer[i].flag==0)persistence_timer[i].flag=1;
+                        persistence_timer[i].last_time = time(NULL);
+                        persistence_timer[i].ack_seq_no = msg.header.seq_no;
+                    }
 
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
@@ -347,27 +329,34 @@ void *thread_R() {
                     }
                     continue;
                 }
+                else if(msg.header.msg_type=='P'){
+                    printf("***************\n");
+                    printf("probe recvd on sockfd %d, seq no %d\n", i, msg.header.seq_no);
+                    printf("***************\n");
+
+                    Message ack;
+                    ack.header.msg_type = 'A';
+                    ack.header.seq_no = msg.header.seq_no;
+                    sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
+
+                    sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
+                    printf("***************\n");
+                    printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
+                    printf("***************\n");
+                    
+                    if(sem_post(SM_mutex)==-1){
+                        perror("sem_post");
+                        return NULL;
+                    }
+                    continue;
+                }
+
+
                 if(sem_post(SM_mutex)==-1){
                     perror("sem_post");
                     return NULL;
                 }
             }else{
-                if(SM[i].socket_alloted){
-                    count_silence_timeout[i]++;
-
-                    if(count_silence_timeout[i]>=MAX_SILENCED_TIMEOUTS){
-                        client_addr = SM[i].destination_addr;
-                        Message ack_msg;
-                        ack_msg.header.msg_type = 'A';
-                        ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
-                        sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
-                        printf("***************\n");
-                        printf("sending refresh ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
-                        printf("***************\n");
-                        sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
-                        count_silence_timeout[i] = 0;
-                    }
-                }
 
                 if(sem_post(SM_mutex)==-1){
                     perror("sem_post");
@@ -396,6 +385,24 @@ void *thread_S() {
 
         for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
             if (SM[i].socket_alloted) { // Check if the socket is allocated
+                //check if the persistence timer is set and if it has gone off...
+                if(persistence_timer[i].flag>0){
+                    int multiplier = (1<<(persistence_timer[i].flag-1));
+                    if(difftime(time(NULL), persistence_timer[i].last_time)>=multiplier*T){
+                        Message probe_msg;
+                        probe_msg.header.msg_type = 'P';
+                        probe_msg.header.seq_no = persistence_timer[i].ack_seq_no;
+                        addr = SM[i].destination_addr;
+                        memset(probe_msg.msg, 0, sizeof(probe_msg.msg));
+                        sendto(SM[i].udp_socket_id, &(probe_msg), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
+                        printf("***************\n");
+                        printf("sending probe msg: %d sockfd, %d seq no, %d flag\n", i, probe_msg.header.seq_no, persistence_timer[i].flag);
+                        printf("***************\n");
+                        persistence_timer[i].last_time = time(NULL);
+                        if(persistence_timer[i].flag<=3)persistence_timer[i].flag++;
+                        continue;
+                    }
+                }
                 for(int offset=0; offset<SM[i].send_window.window_size; offset++){
                     int idx = (SM[i].send_window.window_start_index + offset)%SENDER_MSG_BUFFER;
 
@@ -510,6 +517,9 @@ int main() {
         
     }
     memset(sock_info, 0, sizeof(SOCK_INFO));
+    for(int i=0; i<MAX_MTP_SOCKETS; i++){
+        persistence_timer[i].flag = 0;
+    }
 
     // Register the signal handler for SIGINT
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
