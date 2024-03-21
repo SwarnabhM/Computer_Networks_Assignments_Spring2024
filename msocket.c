@@ -26,19 +26,21 @@ int m_socket(int domain, int type, int protocol) {
     sem_t *Sem1 = NULL;
     sem_t *Sem2 = NULL;
 
-    //SM
+    //shared memory SM table
     key_t key_SM = ftok("msocket.h", 'M');
     if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
         cleanup(SM, sock_info, Sem1, Sem2, NULL);
-        perror("shmget");
+        perror(" error in shmget at SM in m_socket");
         return -1;
     }
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
     if (SM == (MTPSocketEntry *)(-1)) {
         cleanup(SM, sock_info, Sem1, Sem2, NULL);
-        perror("shmat");
+        perror(" error in shmat at SM in m_socket");
         return -1;
     }
+
+
     //sock_info
     key_t key_sockinfo = ftok("msocket.h", 'S');
     if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
@@ -73,7 +75,7 @@ int m_socket(int domain, int type, int protocol) {
         }
     }
     printf("***************\n");
-    printf("free index:%d\n", free_entry_index);
+    printf("Free index:%d\n", free_entry_index);
     printf("***************\n");
 
     if (free_entry_index == -1) {

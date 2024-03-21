@@ -13,6 +13,11 @@
 #include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include<sys/select.h>
+#include<signal.h>
+#include<fcntl.h>
+#include<sys/stat.h>
+#include<sys/wait.h>
 
 
 // Define constants for semaphores
@@ -20,15 +25,20 @@
 
 // Define the MTP socket type
 #define SOCK_MTP 100
+
 // Define the value of parameter T
 #define T 5
+
 #define P 0.5
+
 // Define the maximum number of active MTP sockets
 #define MAX_MTP_SOCKETS 25
+
 //max msg size
 #define MAX_MSG_SIZE 1024
 
 #define SENDER_MSG_BUFFER 10
+
 #define RECEIVER_MSG_BUFFER 5
 
 #define MAX_SILENCED_TIMEOUTS 5
@@ -36,12 +46,12 @@
 
 // Define the structure for a data message header
 typedef struct {
-    char msg_type; //'D' for data, 'A' for acknowledgment, 'P' for Probe messages
-    int seq_no;
-}MessageHeader;
+    char msg_type;    //'D' for data, 'A' for acknowledgment, 'P' for Probe
+    int seq_no;       //sequence number of the message 
+}MessageHeader; 
 
 typedef struct {
-    MessageHeader header;
+    MessageHeader header;   // although this can be done using a single character, for simplicity sake we used structure
     char msg[MAX_MSG_SIZE];
 } Message;
 
@@ -75,9 +85,9 @@ typedef struct {
 
 // Define the structure for an MTP socket entry in shared memory
 typedef struct {
-    int socket_alloted;
+    int socket_alloted;  //flag to check wether process has been alotted the slot
     pid_t process_id;
-    int udp_socket_id;
+    int udp_socket_id;  // udp socket id
     struct sockaddr_in destination_addr;
     swnd send_window;
     rwnd recv_window;

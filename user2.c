@@ -17,7 +17,7 @@ int main(){
     // sleep(5);
 
     char buff[1024];
-    sleep(200);
+    // sleep(200);
     for(int i=0; i<32; i++){
         struct sockaddr_in client_addr;
         memset(&client_addr, 0, sizeof(client_addr));
