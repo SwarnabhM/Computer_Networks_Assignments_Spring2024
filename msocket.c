@@ -25,17 +25,18 @@ int m_socket(int domain, int type, int protocol) {
     SOCK_INFO *sock_info = NULL;
     sem_t *Sem1 = NULL;
     sem_t *Sem2 = NULL;
+    sem_t *SM_mutex = NULL;
 
     //shared memory SM table
     key_t key_SM = ftok("msocket.h", 'M');
     if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror(" error in shmget at SM in m_socket");
         return -1;
     }
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
     if (SM == (MTPSocketEntry *)(-1)) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror(" error in shmat at SM in m_socket");
         return -1;
     }
@@ -44,35 +45,48 @@ int m_socket(int domain, int type, int protocol) {
     //sock_info
     key_t key_sockinfo = ftok("msocket.h", 'S');
     if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
     if (sock_info == (SOCK_INFO *)(-1)) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
     }
     //sem1
     Sem1 = sem_open("/Sem1", 0);
     if (Sem1 == SEM_FAILED) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     //sem2
     Sem2 = sem_open("/Sem2", 0);
     if (Sem2 == SEM_FAILED) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+        return -1;
+    }
+
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Find a free entry in the shared memory
     int free_entry_index = -1;
+    if (sem_wait(SM_mutex) == -1) {
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+        return -1;
+    }
     for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
         if (SM[i].socket_alloted == 0) {
             free_entry_index = i;
             break;
         }
+    }
+    if (sem_post(SM_mutex) == -1) {
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+        return -1;
     }
     printf("***************\n");
     printf("Free index:%d\n", free_entry_index);
@@ -81,19 +95,19 @@ int m_socket(int domain, int type, int protocol) {
     if (free_entry_index == -1) {
         // No free entry available
         errno = ENOBUFS;
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Signal Sem1
     if (sem_post(Sem1) == -1) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Wait on Sem2
     if (sem_wait(Sem2) == -1) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
@@ -107,15 +121,41 @@ int m_socket(int domain, int type, int protocol) {
         printf("socket:%d\n", sock_info->sock_id);
         printf("***************\n");
         // Update SM table
+        if (sem_wait(SM_mutex) == -1) {
+            cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+            return -1;
+        }
         SM[free_entry_index].socket_alloted = 1;
         SM[free_entry_index].process_id = getpid();
         SM[free_entry_index].udp_socket_id = sock_info->sock_id;
+        memset(&(SM[free_entry_index].destination_addr), 0, sizeof(struct sockaddr_in));
+        memset(&(SM[free_entry_index].recv_window), 0, sizeof(rwnd));
+        memset(&(SM[free_entry_index].send_window), 0, sizeof(swnd));
+        SM[free_entry_index].send_window.last_seq_no = 0;
+        SM[free_entry_index].send_window.window_size = 5;
+        SM[free_entry_index].send_window.window_start_index = 0;
+        SM[free_entry_index].recv_window.index_to_read = 0;
+        SM[free_entry_index].recv_window.next_seq_no = 1;
+        SM[free_entry_index].recv_window.window_size = 5;
+        SM[free_entry_index].recv_window.index_to_write = 0;
+        SM[free_entry_index].recv_window.nospace = 0;
+        for(int j=0; j<SENDER_MSG_BUFFER; j++){
+            SM[free_entry_index].send_window.send_buff[j].ack_no = -1;
+            SM[free_entry_index].send_window.send_buff[j].sent = 0;
+        }
+        for(int j=0; j<RECEIVER_MSG_BUFFER; j++){
+            SM[free_entry_index].recv_window.recv_buff[j].ack_no = -1;
+        }
+        if (sem_post(SM_mutex) == -1) {
+            cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+            return -1;
+        }
     }
 
     // Reset SOCK_INFO
     memset(sock_info, 0, sizeof(SOCK_INFO));
 
-    cleanup(SM, sock_info, Sem1, Sem2, NULL);
+    cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
 
     return free_entry_index;
 }
@@ -127,40 +167,46 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
     SOCK_INFO *sock_info = NULL;
     sem_t *Sem1 = NULL;
     sem_t *Sem2 = NULL;
+    sem_t *SM_mutex = NULL;
     //SM
     key_t key_SM = ftok("msocket.h", 'M');
     if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
     if (SM == (MTPSocketEntry *)(-1)) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
     }
     //sock_info
     key_t key_sockinfo = ftok("msocket.h", 'S');
     if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
     if (sock_info == (SOCK_INFO *)(-1)) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
     }
     //sem1
     Sem1 = sem_open("/Sem1", 0);
     if (Sem1 == SEM_FAILED) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     //sem2
     Sem2 = sem_open("/Sem2", 0);
     if (Sem2 == SEM_FAILED) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+        return -1;
+    }
+    //SM_mutex
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
@@ -171,13 +217,13 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
 
     // Signal Sem1
     if (sem_post(Sem1) == -1) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Wait on Sem2
     if (sem_wait(Sem2) == -1) {
-        cleanup(SM, sock_info, Sem1, Sem2, NULL);
+        cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
@@ -195,14 +241,22 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = dest_port;
         dest_addr.sin_addr.s_addr = dest_ip;
+        if (sem_wait(SM_mutex) == -1) {
+            cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+            return -1;
+        }
         SM[sockfd].destination_addr = dest_addr;
+        if (sem_post(SM_mutex) == -1) {
+            cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
+            return -1;
+        }
     }
 
     // Reset SOCK_INFO
     memset(sock_info, 0, sizeof(SOCK_INFO));
 
     // Detach the shared memory segment for SM
-    cleanup(SM, sock_info, Sem1, Sem2, NULL);
+    cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
 
     return success;
 }
@@ -362,6 +416,9 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
 }
 
 int m_close(int sockfd) {
+    MTPSocketEntry *SM = NULL;
+    sem_t *SM_mutex = NULL;
+
     
     if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS) {
         errno = EBADF;  // Bad file descriptor
@@ -372,59 +429,64 @@ int m_close(int sockfd) {
     //SM
     key_t key_SM = ftok("msocket.h", 'M');
     if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
-    MTPSocketEntry *SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
+    SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
     if (SM == (MTPSocketEntry *)(-1)) {
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
-    sem_t *SM_mutex;
     if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Lock the shared memory for mutual exclusion
     if (sem_wait(SM_mutex) == -1) {
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
-    if(SM[sockfd].process_id != getpid()){
+    if(sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id!=getpid()){
         errno = EBADF;
         sem_post(SM_mutex);
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
-        // Mark the socket entry as free
-        SM[sockfd].socket_alloted = 0;
-        SM[sockfd].process_id = -1;
-        SM[sockfd].udp_socket_id = -1;
-        memset(&(SM[sockfd].destination_addr), 0, sizeof(struct sockaddr_in));
-        // Clear send and receive windows
-        memset(&(SM[sockfd].send_window), 0, sizeof(swnd));
-        memset(&(SM[sockfd].recv_window), 0, sizeof(rwnd));
-        SM[sockfd].send_window.last_seq_no = 0;
-        SM[sockfd].send_window.window_size = 5;
-        SM[sockfd].send_window.window_start_index = 0;
-        SM[sockfd].recv_window.index_to_read = 0;
-        SM[sockfd].recv_window.next_seq_no = 1;
-        SM[sockfd].recv_window.window_size = 5;
-        for(int j=0; j<SENDER_MSG_BUFFER; j++){
-            SM[sockfd].send_window.send_buff[j].ack_no = -1;
-        }
-        for(int j=0; j<RECEIVER_MSG_BUFFER; j++){
-            SM[sockfd].recv_window.recv_buff[j].ack_no = -1;
-        }
+    // Mark the socket entry as free
+    SM[sockfd].socket_alloted = 0;
+    // SM[sockfd].process_id = -1;
+    // SM[sockfd].udp_socket_id = -1;
+    // memset(&(SM[sockfd].destination_addr), 0, sizeof(struct sockaddr_in));
+    // // Clear send and receive windows
+    // memset(&(SM[sockfd].send_window), 0, sizeof(swnd));
+    // memset(&(SM[sockfd].recv_window), 0, sizeof(rwnd));
+    // SM[sockfd].send_window.last_seq_no = 0;
+    // SM[sockfd].send_window.window_size = 5;
+    // SM[sockfd].send_window.window_start_index = 0;
+    // SM[sockfd].recv_window.index_to_read = 0;
+    // SM[sockfd].recv_window.next_seq_no = 1;
+    // SM[sockfd].recv_window.window_size = 5;
+    // SM[sockfd].recv_window.index_to_write = 0;
+    // SM[sockfd].recv_window.nospace = 0;
+    // for(int j=0; j<SENDER_MSG_BUFFER; j++){
+    //     SM[sockfd].send_window.send_buff[j].ack_no = -1;
+    //     SM[sockfd].send_window.send_buff[j].sent = 0;
+    // }
+    // for(int j=0; j<RECEIVER_MSG_BUFFER; j++){
+    //     SM[sockfd].recv_window.recv_buff[j].ack_no = -1;
+    // }
 
     // Unlock the shared memory
     if (sem_post(SM_mutex) == -1) {
+        cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
-    if (shmdt(SM) == -1) {
-        return -1;
-    }
-    sem_close(SM_mutex);
+    cleanup(SM, NULL, NULL, NULL, SM_mutex);
 
     return 0;
 }

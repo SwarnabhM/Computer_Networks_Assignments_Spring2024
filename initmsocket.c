@@ -46,68 +46,74 @@ void *thread_R() {
     struct timeval timeout;
     timeout.tv_sec = T;
     timeout.tv_usec = 0;
-    // Main loop for handling incoming messages
 
-    // FD_ZERO(&readfds);
-    // if (sem_wait(SM_mutex) == -1) {
-    //     perror("sem_wait");
-    //     return NULL;
-    // }
-    // max_sd = -1;
-    // for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
-    //     if(SM[i].socket_alloted){
-    //         FD_SET(SM[i].udp_socket_id, &readfds);
-    //         if (SM[i].udp_socket_id > max_sd) {
-    //             max_sd = SM[i].udp_socket_id;
-    //         }
-    //     }
-    // }
-    // if (sem_post(SM_mutex) == -1) {
-    //     perror("sem_post");
-    //     return NULL;
-    // }
+    // Main loop for handling incoming messages
+    FD_ZERO(&readfds);
+    if (sem_wait(SM_mutex) == -1) {
+        perror("sem_wait");
+        return NULL;
+    }
+    max_sd = -1;
+    for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
+        if(SM[i].socket_alloted){
+            FD_SET(SM[i].udp_socket_id, &readfds);
+            if (SM[i].udp_socket_id > max_sd) {
+                max_sd = SM[i].udp_socket_id;
+            }
+        }
+    }
+    if (sem_post(SM_mutex) == -1) {
+        perror("sem_post");
+        return NULL;
+    }
     
     while (1) {
         // Clear the socket set
-        max_sd = 0;
-        fd_set temp;
-        FD_ZERO(&temp);
-        sem_wait(SM_mutex);
-        for(int i=0; i<MAX_MTP_SOCKETS; i++){
-            if(SM[i].socket_alloted){
-                FD_SET(SM[i].udp_socket_id, &temp);
-                if(SM[i].udp_socket_id>max_sd){
-                    max_sd = SM[i].udp_socket_id;
-                }
-            }
-        }
-        sem_post(SM_mutex);
+        fd_set temp = readfds;
 
         // Use select to monitor socket activity
         activity = select(max_sd + 1, &temp, NULL, NULL, &timeout);
         if (activity < 0) {
             perror("select");
-            exit(EXIT_FAILURE);
+            if (sem_wait(SM_mutex) == -1) {
+                perror("sem_wait");
+                return NULL;
+            }
+            FD_ZERO(&readfds);
+            max_sd = -1;
+            for(int i=0; i<MAX_MTP_SOCKETS; i++){
+                if(SM[i].socket_alloted){
+                    FD_SET(SM[i].udp_socket_id, &readfds);
+                    if (SM[i].udp_socket_id > max_sd) {
+                        max_sd = SM[i].udp_socket_id;
+                    }
+                }
+            }
+            if (sem_post(SM_mutex) == -1) {
+                perror("sem_post");
+                return NULL;
+            }
+            continue;
         }
 
         if(activity == 0){
             timeout.tv_sec = T;
             timeout.tv_usec = 0;
             //ADD THE NOSPACE UPDATE -- done
-            // FD_ZERO(&readfds);
             if (sem_wait(SM_mutex) == -1) {
                 perror("sem_wait");
                 return NULL;
             }
             // Add UDP sockets to the set
-            // max_sd = -1;
+            FD_ZERO(&readfds);
+            max_sd = -1;
             for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
                 if(SM[i].socket_alloted){
                     
-                    // FD_SET(SM[i].udp_socket_id, &readfds);
-                    // if (SM[i].udp_socket_id > max_sd) {
-                    //     max_sd = SM[i].udp_socket_id;
-                    // }
+                    FD_SET(SM[i].udp_socket_id, &readfds);
+                    if (SM[i].udp_socket_id > max_sd) {
+                        max_sd = SM[i].udp_socket_id;
+                    }
                     if(SM[i].recv_window.nospace==1 && SM[i].recv_window.window_size>0){
                         client_addr = SM[i].destination_addr;
                         Message ack_msg;
@@ -145,6 +151,7 @@ void *thread_R() {
                 ssize_t recv_len = recvfrom(SM[i].udp_socket_id, &msg, sizeof(Message), 0,
                                             (struct sockaddr *)&client_addr, &addr_len);
                 if(SM[i].socket_alloted<=0){
+                    FD_CLR(SM[i].udp_socket_id, &readfds);
                     sem_post(SM_mutex);
                     continue;
                 }
@@ -459,7 +466,6 @@ void *thread_S() {
 }
 
 void* thread_G(){
-    printf("G start\n");
     // The  init  process  should  also  start  a  garbage  collector  process  G  to  clean  up  the 
     // corresponding entry in the MTP socket if the corresponding process is killed and the 
     // socket has not been closed explicitly. 
@@ -473,7 +479,7 @@ void* thread_G(){
             perror("sem_wait");
             return NULL;
         }
-        printf("sem_acc\n");
+        
         for(int i=0;i<MAX_MTP_SOCKETS;i++){
 
             if(SM[i].socket_alloted <= 0 ) continue;
