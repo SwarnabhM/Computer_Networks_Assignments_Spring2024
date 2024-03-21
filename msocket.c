@@ -362,6 +362,7 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
 }
 
 int m_close(int sockfd) {
+    
     if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS) {
         errno = EBADF;  // Bad file descriptor
         return -1;
@@ -377,25 +378,7 @@ int m_close(int sockfd) {
     if (SM == (MTPSocketEntry *)(-1)) {
         return -1;
     }
-    //sock_info
-    key_t key_sockinfo = ftok("msocket.h", 'S');
-    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
-        return -1;
-    }
-    SOCK_INFO *sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
-    if (sock_info == (SOCK_INFO *)(-1)) {
-        return -1;
-    }
-    //sem1
-    sem_t *Sem1 = sem_open("/Sem1", 0);
-    if (Sem1 == SEM_FAILED) {
-        return -1;
-    }
-    //sem2
-    sem_t *Sem2 = sem_open("/Sem2", 0);
-    if (Sem2 == SEM_FAILED) {
-        return -1;
-    }
+
     sem_t *SM_mutex;
     if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
         return -1;
@@ -412,30 +395,6 @@ int m_close(int sockfd) {
         return -1;
     }
 
-    // Set SOCK_INFO fields
-    sock_info->sock_id = SM[sockfd].udp_socket_id;
-    sock_info->IP = 0;
-    sock_info->port = 0;
-
-    if (sem_post(Sem1) == -1) {
-        sem_post(SM_mutex);
-        return -1;
-    }
-
-    // Wait on Sem2
-    if (sem_wait(Sem2) == -1) {
-        sem_post(SM_mutex);
-        return -1;
-    }
-
-    int success = 0;
-    // Check SOCK_INFO for errors
-    if (sock_info->sock_id == -1) {
-        errno = sock_info->errno_val;
-        success = -1;
-    }
-
-    if(success==0){
         // Mark the socket entry as free
         SM[sockfd].socket_alloted = 0;
         SM[sockfd].process_id = -1;
@@ -456,7 +415,6 @@ int m_close(int sockfd) {
         for(int j=0; j<RECEIVER_MSG_BUFFER; j++){
             SM[sockfd].recv_window.recv_buff[j].ack_no = -1;
         }
-    }
 
     // Unlock the shared memory
     if (sem_post(SM_mutex) == -1) {
@@ -467,8 +425,6 @@ int m_close(int sockfd) {
         return -1;
     }
     sem_close(SM_mutex);
-    sem_close(Sem1);
-    sem_close(Sem2);
 
-    return success;
+    return 0;
 }
