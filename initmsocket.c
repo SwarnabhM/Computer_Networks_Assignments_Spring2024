@@ -1,11 +1,11 @@
 #include "msocket.h"
 
-int shm_id;
-MTPSocketEntry *SM;
-SOCK_INFO *sock_info;
-sem_t *Sem1;
-sem_t *Sem2;
-sem_t* SM_mutex;
+int shmid_SM=-1, shmid_sock_info=-1;
+MTPSocketEntry *SM = NULL;
+SOCK_INFO *sock_info = NULL;
+sem_t *Sem1 = NULL;
+sem_t *Sem2 = NULL;
+sem_t* SM_mutex = NULL;
 
 typedef struct{
     int flag;
@@ -14,23 +14,45 @@ typedef struct{
 } Persistence_Timer_;
 Persistence_Timer_ persistence_timer[MAX_MTP_SOCKETS];
 
+
+void cleanup_on_exit() {
+    // Detach the shared memory segments
+    if (SM != NULL) {
+        if (shmdt(SM) == -1) {
+            perror("shmdt(SM)");
+        }
+    }
+    if (sock_info != NULL) {
+        if (shmdt(sock_info) == -1) {
+            perror("shmdt(sock_info)");
+        }
+    }
+    
+    // Destroy the semaphores
+    if (Sem1 != NULL) sem_destroy(Sem1);
+    if (Sem2 != NULL) sem_destroy(Sem2);
+    if (SM_mutex != NULL) sem_destroy(SM_mutex);
+    
+    // Delete shared memory segments
+    if(shmid_SM!=-1){
+        if (shmctl(shmid_SM, IPC_RMID, NULL) == -1) {
+            perror("shmctl(IPC_RMID)");
+        }
+    }
+    if(shmid_sock_info!=-1){
+        if (shmctl(shmid_sock_info, IPC_RMID, NULL) == -1) {
+            perror("shmctl(IPC_RMID)");
+        }
+    }
+    
+    printf("Shared memory and semaphores detached and destroyed successfully.\n");
+}
+
 // Signal handler for SIGINT (Ctrl+C)
 void signal_handler(int signum) {
-    printf("\nReceived Ctrl+C. Detaching shared memory and quitting.\n");
+    if(signum==SIGINT)printf("\nReceived SIGINT. Detaching shared memory and quitting.\n");
+    else if(signum==SIGQUIT)printf("\nReceived SIGQUIT. Detaching shared memory and quitting.\n");
     // Detach the shared memory segments
-    if (shmdt(SM) == -1) {
-        perror("shmdt");
-        exit(EXIT_FAILURE);
-    }
-    if (shmdt(sock_info) == -1) {
-        perror("shmdt");
-        exit(EXIT_FAILURE);
-    }
-    // Destroy the semaphores
-    sem_destroy(Sem1);
-    sem_destroy(Sem2);
-    sem_destroy(SM_mutex);
-    printf("Shared memory and semaphores detached and destroyed successfully.\n");
     exit(EXIT_SUCCESS);
 }
 
@@ -38,7 +60,7 @@ void signal_handler(int signum) {
 void *thread_R() {
 
     fd_set readfds;
-    int max_sd, activity, new_socket;
+    int max_sd, activity;
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
     Message msg;
@@ -161,7 +183,7 @@ void *thread_R() {
                         return NULL;
                     }
                     perror("recvfrom");
-                    exit(EXIT_FAILURE);
+                    continue;
                 }
                 printf("***************\n");
                 printf("received msg on sockfd %d\n", i);
@@ -469,7 +491,6 @@ void* thread_G(){
     // The  init  process  should  also  start  a  garbage  collector  process  G  to  clean  up  the 
     // corresponding entry in the MTP socket if the corresponding process is killed and the 
     // socket has not been closed explicitly. 
-    int status;
     while(1){
 
         sleep(2*T);
@@ -504,16 +525,22 @@ void* thread_G(){
 
 
 int main() {
+     // Register exit handler
+    if (atexit(cleanup_on_exit) != 0) {
+        perror("atexit");
+        return EXIT_FAILURE;
+    }
+
     key_t key_SM = ftok("msocket.h", 'M'); // Generate a key for the shared memory segment
 
     // Create the shared memory segment for SM
-    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), IPC_CREAT | 0666)) < 0) {
+    if ((shmid_SM = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), IPC_CREAT | 0666)) < 0) {
         perror("shmget");
         exit(EXIT_FAILURE);
     }
 
     // Attach the shared memory segment for SM to the process's address space
-    SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
+    SM = (MTPSocketEntry *)shmat(shmid_SM, NULL, 0);
     if (SM == (MTPSocketEntry *)(-1)) {
         perror("shmat");
         exit(EXIT_FAILURE);
@@ -521,13 +548,13 @@ int main() {
 
     key_t key_sockinfo = ftok("msocket.h", 'S');
     // Create the shared memory segment for sock_info
-    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), IPC_CREAT | 0666)) < 0) {
+    if ((shmid_sock_info = shmget(key_sockinfo, sizeof(SOCK_INFO), IPC_CREAT | 0666)) < 0) {
         perror("shmget");
         exit(EXIT_FAILURE);
     }
 
     // Attach the shared memory segment for sock_info to the process's address space
-    sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
+    sock_info = (SOCK_INFO *)shmat(shmid_sock_info, NULL, 0);
     if (sock_info == (SOCK_INFO *)(-1)) {
         perror("shmat");
         exit(EXIT_FAILURE);
@@ -583,6 +610,10 @@ int main() {
 
     // Register the signal handler for SIGINT
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
+        perror("signal");
+        exit(EXIT_FAILURE);
+    }
+    if (signal(SIGQUIT, signal_handler) == SIG_ERR) {
         perror("signal");
         exit(EXIT_FAILURE);
     }

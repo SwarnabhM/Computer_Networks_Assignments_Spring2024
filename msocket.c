@@ -20,6 +20,13 @@ void cleanup(MTPSocketEntry *SM, SOCK_INFO *sock_info, sem_t *Sem1, sem_t *Sem2,
 
 // Function to open an MTP socket
 int m_socket(int domain, int type, int protocol) {
+    if((!(domain==AF_INET || domain==PF_INET)) || type!=SOCK_MTP || protocol!=0){
+        if(type!=SOCK_MTP)errno = EPROTOTYPE;
+        else if(protocol!=0)errno = EPROTONOSUPPORT;
+        else errno = EAFNOSUPPORT;
+        return -1;
+    }
+
     int shm_id;
     MTPSocketEntry *SM = NULL;
     SOCK_INFO *sock_info = NULL;
