@@ -1,21 +1,32 @@
 #include "msocket.h"
 
-int shmid_SM=-1, shmid_sock_info=-1;
-MTPSocketEntry *SM = NULL;
-SOCK_INFO *sock_info = NULL;
-sem_t *Sem1 = NULL;
-sem_t *Sem2 = NULL;
-sem_t* SM_mutex = NULL;
+// Global variables
+int shmid_SM = -1; // Shared memory ID for MTPSocketEntry SM
+int shmid_sock_info = -1; // Shared memory ID for SOCK_INFO
+MTPSocketEntry *SM = NULL; // Pointer to the shared memory segment for MTPSocketEntry SM
+SOCK_INFO *sock_info = NULL; // Pointer to the shared memory segment for SOCK_INFO
+sem_t *Sem1 = NULL; // Semaphore for synchronization (used for m_socket and m_bind calls)
+sem_t *Sem2 = NULL; // Semaphore for synchronization (used for m_socket and m_bind calls)
+sem_t *SM_mutex = NULL; // Semaphore for mutual exclusion (used for accessing shared resource SM)
+int num_messages = 0; // Number of messages sent
+int num_transmissions = 0; // Number of transmissions made
 
-typedef struct{
-    int flag;
-    time_t last_time;
-    int ack_seq_no;
+// Structure for persistence timer
+typedef struct {
+    int flag; //to indicate the no. of timeouts, to set the exponential backoff waiting time (within an upper limit)
+    time_t last_time; //latest time when ACK with window size 0 was received
+    int ack_seq_no; //sequence number of the ACK message with 0 window size
 } Persistence_Timer_;
+
+// Array to store persistence timers for each socket
 Persistence_Timer_ persistence_timer[MAX_MTP_SOCKETS];
 
-
+// Cleanup function to be called on exit
 void cleanup_on_exit() {
+    // Calculate and print average number of transmissions per message
+    double avg_trans_per_msg = (double)(num_transmissions) / (num_messages);
+    printf("The average number of transmissions made to send each message (for p = %lf): %lf\n", P, avg_trans_per_msg);
+
     // Detach the shared memory segments
     if (SM != NULL) {
         if (shmdt(SM) == -1) {
@@ -27,31 +38,33 @@ void cleanup_on_exit() {
             perror("shmdt(sock_info)");
         }
     }
-    
+
     // Destroy the semaphores
     if (Sem1 != NULL) sem_destroy(Sem1);
     if (Sem2 != NULL) sem_destroy(Sem2);
     if (SM_mutex != NULL) sem_destroy(SM_mutex);
-    
+
     // Delete shared memory segments
-    if(shmid_SM!=-1){
+    if (shmid_SM != -1) {
         if (shmctl(shmid_SM, IPC_RMID, NULL) == -1) {
             perror("shmctl(IPC_RMID)");
         }
     }
-    if(shmid_sock_info!=-1){
+    if (shmid_sock_info != -1) {
         if (shmctl(shmid_sock_info, IPC_RMID, NULL) == -1) {
             perror("shmctl(IPC_RMID)");
         }
     }
-    
+
     printf("Shared memory and semaphores detached and destroyed successfully.\n");
 }
 
-// Signal handler for SIGINT (Ctrl+C)
+// Signal handler for SIGINT (Ctrl+C) and SIGQUIT
 void signal_handler(int signum) {
-    if(signum==SIGINT)printf("\nReceived SIGINT. Detaching shared memory and quitting.\n");
-    else if(signum==SIGQUIT)printf("\nReceived SIGQUIT. Detaching shared memory and quitting.\n");
+    if (signum == SIGINT)
+        printf("\nReceived SIGINT. Detaching shared memory and quitting.\n");
+    else if (signum == SIGQUIT)
+        printf("\nReceived SIGQUIT. Detaching shared memory and quitting.\n");
     // Detach the shared memory segments
     exit(EXIT_SUCCESS);
 }
@@ -65,11 +78,12 @@ void *thread_R() {
     socklen_t addr_len = sizeof(client_addr);
     Message msg;
 
+    //structure to set the timeout over select() function
     struct timeval timeout;
     timeout.tv_sec = T;
     timeout.tv_usec = 0;
 
-    // Main loop for handling incoming messages
+    //initialization with the available sockets to listen on, using select()
     FD_ZERO(&readfds);
     if (sem_wait(SM_mutex) == -1) {
         perror("sem_wait");
@@ -89,12 +103,15 @@ void *thread_R() {
         return NULL;
     }
     
+    // Main loop for handling incoming messages
     while (1) {
-        // Clear the socket set
+        // set the socket set to listen on
         fd_set temp = readfds;
 
         // Use select to monitor socket activity
         activity = select(max_sd + 1, &temp, NULL, NULL, &timeout);
+
+        // if select() returns negative value, reset the socket set
         if (activity < 0) {
             perror("select");
             if (sem_wait(SM_mutex) == -1) {
@@ -118,10 +135,12 @@ void *thread_R() {
             continue;
         }
 
+        //if timeout occurs, reset the socket set, to include any new MTP sockets that have been formed
         if(activity == 0){
+            //reset the timer
             timeout.tv_sec = T;
             timeout.tv_usec = 0;
-            //ADD THE NOSPACE UPDATE -- done
+
             if (sem_wait(SM_mutex) == -1) {
                 perror("sem_wait");
                 return NULL;
@@ -136,6 +155,7 @@ void *thread_R() {
                     if (SM[i].udp_socket_id > max_sd) {
                         max_sd = SM[i].udp_socket_id;
                     }
+                    //if the 'nospace' flag was set but currently window is available, send an ACK to update with the new window size
                     if(SM[i].recv_window.nospace==1 && SM[i].recv_window.window_size>0){
                         client_addr = SM[i].destination_addr;
                         Message ack_msg;
@@ -172,11 +192,13 @@ void *thread_R() {
 
                 ssize_t recv_len = recvfrom(SM[i].udp_socket_id, &msg, sizeof(Message), 0,
                                             (struct sockaddr *)&client_addr, &addr_len);
+                //if the socket has been closed, drop the message
                 if(SM[i].socket_alloted<=0){
                     FD_CLR(SM[i].udp_socket_id, &readfds);
                     sem_post(SM_mutex);
                     continue;
                 }
+                //if error in receiving the message
                 if (recv_len < 0) {
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
@@ -189,6 +211,7 @@ void *thread_R() {
                 printf("received msg on sockfd %d\n", i);
                 printf("***************\n");
 
+                // drop the received message with probability P
                 if(dropMessage(P)){
                     printf("***************\n");
                     printf("dropped msg on sockfd %d\n", i);
@@ -201,7 +224,7 @@ void *thread_R() {
                     continue;
                 }
 
-                //CHECK IF CORRECT CLIENT IS SENDING -- done
+                // check if the message is received from the paired source only, if not, drop the message
                 if(client_addr.sin_addr.s_addr != SM[i].destination_addr.sin_addr.s_addr || client_addr.sin_port != SM[i].destination_addr.sin_port){
                     printf("***************\n");
                     printf("not from correct dest on sockfd %d\n", i);
@@ -212,15 +235,15 @@ void *thread_R() {
                     }
                     continue;
                 }
-                // Process the received message (you need to implement this part)
-                // You need to handle ACK messages and data messages separately
-                // Update swnd, send ACKs, and store data messages in the receive buffer
+
+                // Process the received message...
+                // If the received message is a DATA message
                 if(msg.header.msg_type=='D'){   
+                    // If the received message is an in-order message
                     if(msg.header.seq_no == SM[i].recv_window.next_seq_no && SM[i].recv_window.window_size>0){
                         int idx = SM[i].recv_window.index_to_write;
                         SM[i].recv_window.recv_buff[idx].ack_no = msg.header.seq_no;
-                        // strcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg);
-                        memcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg, MAX_MSG_SIZE);
+                        memcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg, MAX_MSG_SIZE); //write the message to the buffer
                         printf("***************\n");
                         printf("data recvd on sockfd %d (as next expected), seq no %d, written on %d idx\n", i, msg.header.seq_no, idx);
                         printf("***************\n");
@@ -229,7 +252,7 @@ void *thread_R() {
                         printf("***************\n");
                         printf("recv window size of sockfd %d is %d\n", i, SM[i].recv_window.window_size);
                         printf("***************\n");
-                        //now find the last in order msg recvd and the next index to write
+                        //now find the last in order message received and the next index to write
                         int last_in_order = msg.header.seq_no;
                         int next_idx_to_write = SM[i].recv_window.index_to_write;
                         for(int k=1; k<RECEIVER_MSG_BUFFER; k++){
@@ -250,11 +273,11 @@ void *thread_R() {
                         printf("***************\n");
                         printf("now, for sockfd %d, index to write: %d, next seq no: %d\n", i, SM[i].recv_window.index_to_write, SM[i].recv_window.next_seq_no);
                         printf("***************\n");
+                        //send the corresponding ACK for the message received
                         Message ack;
                         ack.header.msg_type = 'A';
                         ack.header.seq_no = last_in_order;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
-
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
                         printf("***************\n");
                         printf("ack send from sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
@@ -266,6 +289,7 @@ void *thread_R() {
                         }
                         continue;
                     }
+                    //If not in-order, check if the received message is in-window (though out-of-order)
                     int inWindow = 0;
                     int expected_seq_no = SM[i].recv_window.next_seq_no;
                     int new_idx = -1;
@@ -278,26 +302,23 @@ void *thread_R() {
                         expected_seq_no = (expected_seq_no+1)%16;
                         if(expected_seq_no==0)expected_seq_no++;
                     }
+                    //If the received message is in-window and out-of-order message
                     if(inWindow){
                         printf("***************\n");
                         printf("recvd data on sockfd %d, not in order but in window, %d idx, %d seq no\n", i, new_idx, msg.header.seq_no);
                         printf("***************\n");
                         if(SM[i].recv_window.recv_buff[new_idx].ack_no!=msg.header.seq_no){
                             SM[i].recv_window.recv_buff[new_idx].ack_no = msg.header.seq_no;
-                            // strcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg);
-                            memcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg, MAX_MSG_SIZE);
-                            // NOT DECREMENTING THE WINDOW SIZE WHEN RECEIVED AN 'IN WINDOW BUT OUT OF ORDER' MESSAGE !!! CHECK !!!
-                            // SM[i].recv_window.window_size--;
-                            // if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
+                            memcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg, MAX_MSG_SIZE); //store the message at the required position in the buffer
                             printf("***************\n");
                             printf("sockfd %d, data written at idx %d, seq no %d, window size %d\n", i, new_idx, msg.header.seq_no, SM[i].recv_window.window_size);
                             printf("***************\n");
                         }
+                        //send the corresponding ACK for the message received
                         Message ack;
                         ack.header.msg_type = 'A';
                         ack.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : SM[i].recv_window.next_seq_no-1;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
-
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
                         printf("***************\n");
                         printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
@@ -309,16 +330,16 @@ void *thread_R() {
                         }
                         continue;
                     }
+                    //If the received message is out-of-window
                     else{
                         printf("***************\n");
                         printf("recvd data on sockfd %d, not in order and out of window, seq no %d\n", i, msg.header.seq_no);
                         printf("***************\n");
-
+                        //send the corresponding ACK for the message received (without storing the message in the buffer)
                         Message ack;
                         ack.header.msg_type = 'A';
                         ack.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : SM[i].recv_window.next_seq_no-1;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
-
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
                         printf("***************\n");
                         printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
@@ -331,10 +352,12 @@ void *thread_R() {
                         continue;
                     }
                 }
+                //If the received message is an ACK message
                 else if(msg.header.msg_type=='A'){
                     printf("***************\n");
                     printf("ack recvd on sockfd %d, seq no %d, window size %s\n", i, msg.header.seq_no, msg.msg);
                     printf("***************\n");
+                    //check if the sequence number of the ACK is in window
                     int idx = SM[i].send_window.window_start_index;
                     int ack_in_window = -1;
                     int len = -1;
@@ -347,7 +370,9 @@ void *thread_R() {
                             break;
                         }
                     }
+                    //if the ACK is received for an in-window message
                     if(ack_in_window!=-1){
+                        //update the send window as per the last-in-order message received by receiver (as indicated by the sequence no. of ACK message)
                         for(int k = 0; k<=len; k++){
                             int new_idx = (idx+k)%SENDER_MSG_BUFFER;
                             SM[i].send_window.send_buff[new_idx].ack_no = -1;
@@ -357,17 +382,22 @@ void *thread_R() {
                         printf("sockfd %d swnd window start update to %d\n", i, SM[i].send_window.window_start_index);
                         printf("***************\n");
                     }
+                    //update the send window size as per the window size indicated by the ACK message
                     SM[i].send_window.window_size = atoi(msg.msg);
                     printf("***************\n");
                     printf("sockfd %d swnd window size update %d\n", i, SM[i].send_window.window_size);
                     printf("***************\n");
+
+                    //To handle the 'ACK with window size 0' deadlock situation... (by using the 'Persistence Timer' solution)
+                    //if the window size is greater than 0, turn off the persistence timer
                     if (SM[i].send_window.window_size>0){
                         persistence_timer[i].flag = 0;
                     }
+                    //if the window size is equal to 0, set the persistence timer
                     if(SM[i].send_window.window_size==0){
                         if(persistence_timer[i].flag==0)persistence_timer[i].flag=1;
                         persistence_timer[i].last_time = time(NULL);
-                        persistence_timer[i].ack_seq_no = msg.header.seq_no;
+                        persistence_timer[i].ack_seq_no = msg.header.seq_no; //store the sequence no. of the ACK message
                     }
 
                     if(sem_post(SM_mutex)==-1){
@@ -376,16 +406,16 @@ void *thread_R() {
                     }
                     continue;
                 }
+                //if the received message is PROBE message (sent when the persistence timer goes off)
                 else if(msg.header.msg_type=='P'){
                     printf("***************\n");
                     printf("probe recvd on sockfd %d, seq no %d\n", i, msg.header.seq_no);
                     printf("***************\n");
-
+                    //send the corresponding ACK with the current window size
                     Message ack;
                     ack.header.msg_type = 'A';
                     ack.header.seq_no = msg.header.seq_no;
                     sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
-
                     sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
                     printf("***************\n");
                     printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
@@ -417,6 +447,7 @@ void *thread_R() {
     return NULL;
 }
 
+// Function to handle sending messages
 void *thread_S() {
     time_t current_time;
     struct sockaddr_in addr;
@@ -425,17 +456,20 @@ void *thread_S() {
         // Sleep for some time
         usleep((T / 2) * 700000);
 
+        // Acquire the mutex to access shared resources
         if (sem_wait(SM_mutex) == -1) {
             perror("sem_wait");
             return NULL;
         }
 
+        // Iterate over all sockets
         for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
             if (SM[i].socket_alloted) { // Check if the socket is allocated
-                //check if the persistence timer is set and if it has gone off...
-                if(persistence_timer[i].flag>0){
-                    int multiplier = (1<<(persistence_timer[i].flag-1));
-                    if(difftime(time(NULL), persistence_timer[i].last_time)>=multiplier*T){
+                // Check if the persistence timer is set and if it has gone off
+                if(persistence_timer[i].flag > 0){
+                    int multiplier = (1 << (persistence_timer[i].flag - 1));
+                    if(difftime(time(NULL), persistence_timer[i].last_time) >= multiplier * T){
+                        // Send probe message
                         Message probe_msg;
                         probe_msg.header.msg_type = 'P';
                         probe_msg.header.seq_no = persistence_timer[i].ack_seq_no;
@@ -446,33 +480,40 @@ void *thread_S() {
                         printf("sending probe msg: %d sockfd, %d seq no, %d flag\n", i, probe_msg.header.seq_no, persistence_timer[i].flag);
                         printf("***************\n");
                         persistence_timer[i].last_time = time(NULL);
-                        if(persistence_timer[i].flag<=3)persistence_timer[i].flag++;
+                        if(persistence_timer[i].flag <= 3) persistence_timer[i].flag++; //to maintain exponential backoff waiting time (within an upper limit)
                         continue;
                     }
                 }
-                for(int offset=0; offset<SM[i].send_window.window_size; offset++){
-                    int idx = (SM[i].send_window.window_start_index + offset)%SENDER_MSG_BUFFER;
+                // Iterate over the send window
+                for(int offset = 0; offset < SM[i].send_window.window_size; offset++){
+                    int idx = (SM[i].send_window.window_start_index + offset) % SENDER_MSG_BUFFER;
 
-                    if(SM[i].send_window.send_buff[idx].ack_no==-1)break;
+                    if(SM[i].send_window.send_buff[idx].ack_no == -1) break;
 
-                    if(SM[i].send_window.send_buff[idx].sent==0){
+                    if(SM[i].send_window.send_buff[idx].sent == 0){
+                        // Send the message if it hasn't been sent yet
                         printf("***************\n");
                         printf("sending: %d sockfd, %d idx\n", i, idx);
                         printf("***************\n");
                         addr = SM[i].destination_addr;
                         sendto(SM[i].udp_socket_id, &(SM[i].send_window.send_buff[idx].message), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
+                        num_messages++;
+                        num_transmissions++;
                         SM[i].send_window.send_buff[idx].time = time(NULL);
                         SM[i].send_window.send_buff[idx].sent = 1;
                         continue;
                     }
+                    // Check if it's time to resend the message
                     time(&current_time);
                     double time_gap = difftime(current_time, SM[i].send_window.send_buff[idx].time);
                     if(time_gap >= T){
+                        // Resend the message
                         printf("***************\n");
                         printf("sending: %d sockfd, %d idx\n", i, idx);
                         printf("***************\n");  
                         addr = SM[i].destination_addr;
                         sendto(SM[i].udp_socket_id, &(SM[i].send_window.send_buff[idx].message), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
+                        num_transmissions++;
                         SM[i].send_window.send_buff[idx].time = time(NULL);
                         continue;
                     }
@@ -480,6 +521,7 @@ void *thread_S() {
             }
         }
 
+        // Release the mutex
         if (sem_post(SM_mutex) == -1) {
             perror("sem_post");
             return NULL;
@@ -489,28 +531,30 @@ void *thread_S() {
     return NULL;
 }
 
+//garbage collector process G to clean up the corresponding entry in the MTP socket if the corresponding process is killed
 void* thread_G(){
-    // The  init  process  should  also  start  a  garbage  collector  process  G  to  clean  up  the 
-    // corresponding entry in the MTP socket if the corresponding process is killed and the 
-    // socket has not been closed explicitly. 
-    while(1){
 
-        sleep(2*T);
+    while(1){
+        // Sleep for a period of 3*T seconds
+        sleep(3*T);
         
-        // acquire mutex
+        // Acquire the mutex to access shared resources safely
         if (sem_wait(SM_mutex) == -1) {
             perror("sem_wait");
             return NULL;
         }
         
+        // Iterate through the MTP socket entries
         for(int i=0;i<MAX_MTP_SOCKETS;i++){
-
+            // Check if the socket is allocated
             if(SM[i].socket_alloted <= 0 ) continue;
             
+            // Get the process ID associated with the socket
             pid_t p=SM[i].process_id;
+            // Check if the process is still running
             if(kill(p,0)==0) continue;
+            // If the process is no longer running, close the socket and free the allocated resources
             if(errno==ESRCH){
-                // close the fds of process that have been killed and free allocated row
                 close(SM[i].udp_socket_id);
                 SM[i].socket_alloted = 0;
                 printf("***************\n");
@@ -518,12 +562,14 @@ void* thread_G(){
                 printf("***************\n");
             }
         }
+        // Release the mutex
         if (sem_post(SM_mutex) == -1) {
             perror("sem_post");
             return NULL;
         }
     }
 }
+
 
 
 int main() {
@@ -574,6 +620,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    // Create and initialize SM_mutex (for shared memory SM)
     if ((SM_mutex = sem_open("/SM_mutex", O_CREAT, SEM_PERMS, 1)) == SEM_FAILED) {
         perror("sem_open");
         exit(EXIT_FAILURE);
@@ -605,7 +652,9 @@ int main() {
         }
         
     }
+    // Clear the sock_info structure
     memset(sock_info, 0, sizeof(SOCK_INFO));
+    // Initialization of the persistence timer for each socket (initially turned off)
     for(int i=0; i<MAX_MTP_SOCKETS; i++){
         persistence_timer[i].flag = 0;
     }
@@ -615,24 +664,26 @@ int main() {
         perror("signal");
         exit(EXIT_FAILURE);
     }
+    // Register the signal handler for SIGQUIT
     if (signal(SIGQUIT, signal_handler) == SIG_ERR) {
         perror("signal");
         exit(EXIT_FAILURE);
     }
 
     printf("Press Ctrl+C to detach shared memory and quit.\n");
+    //Thread to handle sending messages
     pthread_t thread_S_tid;
     if (pthread_create(&thread_S_tid, NULL, thread_S, NULL) != 0) {
         perror("pthread_create: Sender thread\n");
         exit(EXIT_FAILURE);
     }
+    //Thread to handle receiving messages and sending ACKs
     pthread_t thread_R_tid;
     if (pthread_create(&thread_R_tid, NULL, thread_R, NULL) != 0) {
         perror("pthread_create: Receiver thread\n");
         exit(EXIT_FAILURE);
     }
-
-
+    //Thread for cleaning up shared memory SM as garbage collector
     pthread_t thread_G_tid;
     if (pthread_create(&thread_G_tid, NULL, thread_G, NULL) != 0) {
         perror("pthread_create: Garbage collector\n");
@@ -644,15 +695,13 @@ int main() {
     printf("init done\n");
     printf("***************\n");
 
-    // Wait indefinitely
+    // Wait indefinitely to handle m_socket() and m_bind() calls
     while (1) {
         // Wait on Sem1
-        // printf("wait started\n");
         if (sem_wait(Sem1) == -1) {
             perror("sem_wait");
             exit(EXIT_FAILURE);
         }
-        // printf("out of sem1\n");
 
         // Process SOCK_INFO
         if (sock_info->sock_id == 0 && sock_info->IP == 0 && sock_info->port == 0) {

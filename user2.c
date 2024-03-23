@@ -2,37 +2,41 @@
 #define BUFFER_SIZE 1024
 
 int main(int argc, char *argv[]){
-
-    if(argc<5){
-        printf("Please provide 'source IP, source port, destination IP and destination port (respectively)' as command line arguments\n");
+    // Check if command-line arguments are provided
+    if(argc < 5){
+        printf("Please provide 'source IP, source port, destination IP, and destination port (respectively)' as command line arguments\n");
         exit(0);
     }
 
+    // Extract command-line arguments
     char source_IP[INET_ADDRSTRLEN], dest_IP[INET_ADDRSTRLEN];
     strcpy(source_IP, argv[1]);
     strcpy(dest_IP, argv[3]);
     unsigned short source_port = atoi(argv[2]);
     unsigned short dest_port = atoi(argv[4]);
 
+    // Create a socket
     int sockfd = m_socket(AF_INET, SOCK_MTP, 0);
-    if(sockfd<0){
+    if(sockfd < 0){
         printf("Socket creation failed!\n");
         exit(EXIT_FAILURE);
     }
 
-
+    // Bind the socket
     int bind_status = m_bind(sockfd, inet_addr(source_IP), htons(source_port), inet_addr(dest_IP), htons(dest_port));
-    if(bind_status<0){
+    if(bind_status < 0){
         printf("Socket bind failed.\n");
         exit(EXIT_FAILURE);
     }
 
+    // Prepare source address structure
     struct sockaddr_in src_addr;
     memset(&src_addr, 0, sizeof(src_addr));
     src_addr.sin_family = AF_INET;
     src_addr.sin_addr.s_addr = inet_addr(source_IP);
     src_addr.sin_port = htons(source_port);
 
+    // Prepare destination address structure
     struct sockaddr_in dest_addr;
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
@@ -53,11 +57,13 @@ int main(int argc, char *argv[]){
     }
     
     // Receive contents and write to file until termination block is received
+    printf("User 2 (IP: %s, Port: %d) started receiving the file contents.\n", source_IP, source_port);
     while (1) {
         memset(buff, 0, sizeof(buff));
         int addrlen = sizeof(dest_addr);
+        // Receive data
         while((bytes_received = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr*)&dest_addr, (socklen_t *)&addrlen)) < 0){
-            if(errno == ENOMSG)continue;
+            if(errno == ENOMSG)continue; // If no message is available yet, continue waiting
             else{
                 printf("Receive failed for user 2\n");
                 close(file_descriptor);
@@ -71,7 +77,7 @@ int main(int argc, char *argv[]){
         }
 
         // Write received contents to file
-        if (write(file_descriptor, buff, (strlen(buff)>BUFFER_SIZE?BUFFER_SIZE:strlen(buff))) < 0) {
+        if (write(file_descriptor, buff, (strlen(buff) > BUFFER_SIZE ? BUFFER_SIZE : strlen(buff))) < 0) {
             printf("Error writing to the file.\n");
             close(file_descriptor);
             exit(EXIT_FAILURE);
@@ -81,9 +87,10 @@ int main(int argc, char *argv[]){
     // Close the file
     close(file_descriptor);
     
-    printf("Complete file received by user 2.\n");
+    printf("User 2 (IP: %s, Port: %d) completed receiving the file contents (and is written back in file: %s).\n", source_IP, source_port, filename);
+
+    // Close the MTP socket
     //m_close(sockfd);
 
     return 0;
-
 }
