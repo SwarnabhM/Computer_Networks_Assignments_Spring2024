@@ -393,9 +393,9 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
     }
     
     // Copy the message to the buffer
-    char *recv_msg = &(SM[sockfd].recv_window.recv_buff[idx].message);
+    // char *recv_msg = &(SM[sockfd].recv_window.recv_buff[idx].message);
     size_t copy_len = len < MAX_MSG_SIZE ? len : MAX_MSG_SIZE;
-    memcpy(buf, recv_msg, copy_len);
+    memcpy(buf, SM[sockfd].recv_window.recv_buff[idx].message, copy_len);
 
     // Update source address if provided
     if (src_addr != NULL) {

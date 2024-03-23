@@ -219,7 +219,8 @@ void *thread_R() {
                     if(msg.header.seq_no == SM[i].recv_window.next_seq_no && SM[i].recv_window.window_size>0){
                         int idx = SM[i].recv_window.index_to_write;
                         SM[i].recv_window.recv_buff[idx].ack_no = msg.header.seq_no;
-                        strcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg);
+                        // strcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg);
+                        memcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg, MAX_MSG_SIZE);
                         printf("***************\n");
                         printf("data recvd on sockfd %d (as next expected), seq no %d, written on %d idx\n", i, msg.header.seq_no, idx);
                         printf("***************\n");
@@ -283,7 +284,8 @@ void *thread_R() {
                         printf("***************\n");
                         if(SM[i].recv_window.recv_buff[new_idx].ack_no!=msg.header.seq_no){
                             SM[i].recv_window.recv_buff[new_idx].ack_no = msg.header.seq_no;
-                            strcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg);
+                            // strcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg);
+                            memcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg, MAX_MSG_SIZE);
                             // NOT DECREMENTING THE WINDOW SIZE WHEN RECEIVED AN 'IN WINDOW BUT OUT OF ORDER' MESSAGE !!! CHECK !!!
                             // SM[i].recv_window.window_size--;
                             // if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
