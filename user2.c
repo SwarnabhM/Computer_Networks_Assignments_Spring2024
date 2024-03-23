@@ -1,4 +1,5 @@
 #include "msocket.h"
+#define BUFFER_SIZE 1024
 
 int main(int argc, char *argv[]){
 
@@ -26,37 +27,61 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
+    struct sockaddr_in src_addr;
+    memset(&src_addr, 0, sizeof(src_addr));
+    src_addr.sin_family = AF_INET;
+    src_addr.sin_addr.s_addr = inet_addr(source_IP);
+    src_addr.sin_port = htons(source_port);
+
     struct sockaddr_in dest_addr;
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_addr.s_addr = inet_addr(dest_IP);
     dest_addr.sin_port = htons(dest_port);
 
-    char buff[1024];
-    int status;
+    char buff[BUFFER_SIZE];
+    int file_descriptor;
+    ssize_t bytes_received;
 
-    memset(buff, 0, sizeof(buff));
-    int addrlen = sizeof(dest_addr);
-    while((status = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr*)&dest_addr, (socklen_t *)&addrlen)) < 0){
-        if(errno == ENOMSG)continue;
-        else{
-            printf("Receive failed for user 2\n");
-            exit(EXIT_FAILURE);
-        }
-    }
-    printf("Received in user 2: %s\n", buff);
-
-    memset(buff, 0, sizeof(buff));
-    sprintf(buff, "This is BYE from user 2.");
-    while((status = m_sendto(sockfd, buff, strlen(buff)+1, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr))) < 0){
-        if(errno==ENOBUFS)continue;
-        else{
-            printf("Send failed from user 2\n");
-            exit(EXIT_FAILURE);
-        }
+    // Open or create file
+    char filename[50];
+    sprintf(filename, "%s_%hu.txt", inet_ntoa(src_addr.sin_addr), ntohs(src_addr.sin_port));
+    file_descriptor = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (file_descriptor == -1) {
+        printf("Error opening or creating the file.\n");
+        exit(EXIT_FAILURE);
     }
     
-    while(1);
+    // Receive contents and write to file until termination block is received
+    while (1) {
+        memset(buff, 0, sizeof(buff));
+        int addrlen = sizeof(dest_addr);
+        while((bytes_received = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr*)&dest_addr, (socklen_t *)&addrlen)) < 0){
+            if(errno == ENOMSG)continue;
+            else{
+                printf("Receive failed for user 2\n");
+                close(file_descriptor);
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        // Check for termination block
+        if (strcmp(buff, "\r\n.\r\n") == 0) {
+            break; // Termination block received, exit loop
+        }
+
+        // Write received contents to file
+        if (write(file_descriptor, buff, (strlen(buff)>BUFFER_SIZE?BUFFER_SIZE:strlen(buff))) < 0) {
+            printf("Error writing to the file.\n");
+            close(file_descriptor);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Close the file
+    close(file_descriptor);
+    
+    printf("Complete file received by user 2.\n");
     //m_close(sockfd);
 
     return 0;

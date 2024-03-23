@@ -1,4 +1,5 @@
 #include "msocket.h"
+#define BLOCK_SIZE 1024
 
 int main(int argc, char *argv[]){
 
@@ -31,29 +32,40 @@ int main(int argc, char *argv[]){
     dest_addr.sin_addr.s_addr = inet_addr(dest_IP);
     dest_addr.sin_port = htons(dest_port);
 
-    char buff[1024];
-    int status;
-    
+    int file_descriptor = open("content.txt", O_RDONLY);
+    if(file_descriptor == -1) {
+        printf("Error opening the file.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char buff[BLOCK_SIZE];
+    ssize_t bytes_read, bytes_sent;
+    // Send file contents in blocks of size 1024 bytes/characters
     memset(buff, 0, sizeof(buff));
-    sprintf(buff, "This is HELLO from user 1.");
-    while((status = m_sendto(sockfd, buff, strlen(buff)+1, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr))) < 0){
+    while ((bytes_read = read(file_descriptor, buff, BLOCK_SIZE-1)) > 0) {
+        while((bytes_sent = m_sendto(sockfd, buff, strlen(buff), 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr))) < 0){
+            if(errno==ENOBUFS)continue;
+            else{
+                printf("Send failed from user 1\n");
+                close(file_descriptor);
+                exit(EXIT_FAILURE);
+            }
+        }
+        memset(buff, 0, sizeof(buff));
+    }
+
+    // Send termination block
+    char termination_block[] = "\r\n.\r\n";
+    while((bytes_sent = m_sendto(sockfd, termination_block, strlen(termination_block), 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr))) < 0){
         if(errno==ENOBUFS)continue;
         else{
             printf("Send failed from user 1\n");
+            close(file_descriptor);
             exit(EXIT_FAILURE);
         }
     }
 
-    memset(buff, 0, sizeof(buff));
-    int addrlen = sizeof(dest_addr);
-    while((status = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr*)&dest_addr, (socklen_t *)&addrlen)) < 0){
-        if(errno == ENOMSG)continue;
-        else{
-            printf("Receive failed for user 1\n");
-            exit(EXIT_FAILURE);
-        }
-    }
-    printf("Received in user 1: %s\n", buff);
+    close(file_descriptor);
 
     
     while(1);
