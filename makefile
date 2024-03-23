@@ -30,3 +30,4 @@ msocket.o: msocket.c msocket.h
 
 clean:
 	rm -f *.o *.a initmsocket user1 user2
+	rm -f *.*.*.*_*.txt

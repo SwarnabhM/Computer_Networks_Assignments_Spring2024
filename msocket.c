@@ -109,11 +109,6 @@ int m_socket(int domain, int type, int protocol) {
         return -1;
     }
 
-    // Print free index for debugging
-    printf("***************\n");
-    printf("Free index:%d\n", free_entry_index);
-    printf("***************\n");
-
     // Check if free entry available
     if (free_entry_index == -1) {
         // No free entry available, set errno and return
@@ -281,9 +276,6 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
         success = -1;
     } else {
         // Update SM table with destination address
-        printf("***************\n");
-        printf("bind\n");
-        printf("***************\n");
         struct sockaddr_in dest_addr;
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = dest_port;

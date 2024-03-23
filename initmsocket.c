@@ -24,8 +24,13 @@ Persistence_Timer_ persistence_timer[MAX_MTP_SOCKETS];
 // Cleanup function to be called on exit
 void cleanup_on_exit() {
     // Calculate and print average number of transmissions per message
-    double avg_trans_per_msg = (double)(num_transmissions) / (num_messages);
-    printf("The average number of transmissions made to send each message (for p = %lf): %lf\n", P, avg_trans_per_msg);
+    if(num_messages>0){
+        double avg_trans_per_msg = (double)(num_transmissions) / (num_messages);
+        printf("\n==>> The average number of transmissions made to send each message (for p = %lf): %lf\n", P, avg_trans_per_msg);
+    }
+    else{
+        printf("\n=> No message has been sent.\n");
+    }
 
     // Detach the shared memory segments
     if (SM != NULL) {
@@ -162,9 +167,6 @@ void *thread_R() {
                         ack_msg.header.msg_type = 'A';
                         ack_msg.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : (SM[i].recv_window.next_seq_no-1);
                         sprintf(ack_msg.msg, "%d", SM[i].recv_window.window_size);
-                        printf("***************\n");
-                        printf("sending nospace ack: %d sockfd, %d window size, %d seq no\n", i, SM[i].recv_window.window_size, ack_msg.header.seq_no);
-                        printf("***************\n");
                         sendto(SM[i].udp_socket_id, &ack_msg, sizeof(Message), 0, (struct sockaddr *)&client_addr, sizeof(client_addr));
                         SM[i].recv_window.nospace = 0;
                     }
@@ -207,15 +209,9 @@ void *thread_R() {
                     perror("recvfrom");
                     continue;
                 }
-                printf("***************\n");
-                printf("received msg on sockfd %d\n", i);
-                printf("***************\n");
 
                 // drop the received message with probability P
                 if(dropMessage(P)){
-                    printf("***************\n");
-                    printf("dropped msg on sockfd %d\n", i);
-                    printf("***************\n");
 
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
@@ -226,9 +222,6 @@ void *thread_R() {
 
                 // check if the message is received from the paired source only, if not, drop the message
                 if(client_addr.sin_addr.s_addr != SM[i].destination_addr.sin_addr.s_addr || client_addr.sin_port != SM[i].destination_addr.sin_port){
-                    printf("***************\n");
-                    printf("not from correct dest on sockfd %d\n", i);
-                    printf("***************\n");
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
                         return NULL;
@@ -244,14 +237,8 @@ void *thread_R() {
                         int idx = SM[i].recv_window.index_to_write;
                         SM[i].recv_window.recv_buff[idx].ack_no = msg.header.seq_no;
                         memcpy(SM[i].recv_window.recv_buff[idx].message, msg.msg, MAX_MSG_SIZE); //write the message to the buffer
-                        printf("***************\n");
-                        printf("data recvd on sockfd %d (as next expected), seq no %d, written on %d idx\n", i, msg.header.seq_no, idx);
-                        printf("***************\n");
                         SM[i].recv_window.window_size--;
                         if(SM[i].recv_window.window_size==0)SM[i].recv_window.nospace = 1;
-                        printf("***************\n");
-                        printf("recv window size of sockfd %d is %d\n", i, SM[i].recv_window.window_size);
-                        printf("***************\n");
                         //now find the last in order message received and the next index to write
                         int last_in_order = msg.header.seq_no;
                         int next_idx_to_write = SM[i].recv_window.index_to_write;
@@ -270,18 +257,13 @@ void *thread_R() {
                         }
                         SM[i].recv_window.index_to_write = (next_idx_to_write+1)%RECEIVER_MSG_BUFFER;
                         SM[i].recv_window.next_seq_no = (last_in_order==15)? 1 : (last_in_order+1);
-                        printf("***************\n");
-                        printf("now, for sockfd %d, index to write: %d, next seq no: %d\n", i, SM[i].recv_window.index_to_write, SM[i].recv_window.next_seq_no);
-                        printf("***************\n");
+
                         //send the corresponding ACK for the message received
                         Message ack;
                         ack.header.msg_type = 'A';
                         ack.header.seq_no = last_in_order;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
-                        printf("***************\n");
-                        printf("ack send from sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
-                        printf("***************\n");
 
                         if(sem_post(SM_mutex)==-1){
                             perror("sem_post");
@@ -304,15 +286,10 @@ void *thread_R() {
                     }
                     //If the received message is in-window and out-of-order message
                     if(inWindow){
-                        printf("***************\n");
-                        printf("recvd data on sockfd %d, not in order but in window, %d idx, %d seq no\n", i, new_idx, msg.header.seq_no);
-                        printf("***************\n");
+
                         if(SM[i].recv_window.recv_buff[new_idx].ack_no!=msg.header.seq_no){
                             SM[i].recv_window.recv_buff[new_idx].ack_no = msg.header.seq_no;
                             memcpy(SM[i].recv_window.recv_buff[new_idx].message, msg.msg, MAX_MSG_SIZE); //store the message at the required position in the buffer
-                            printf("***************\n");
-                            printf("sockfd %d, data written at idx %d, seq no %d, window size %d\n", i, new_idx, msg.header.seq_no, SM[i].recv_window.window_size);
-                            printf("***************\n");
                         }
                         //send the corresponding ACK for the message received
                         Message ack;
@@ -320,9 +297,6 @@ void *thread_R() {
                         ack.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : SM[i].recv_window.next_seq_no-1;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
-                        printf("***************\n");
-                        printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
-                        printf("***************\n");
 
                         if(sem_post(SM_mutex)==-1){
                             perror("sem_post");
@@ -332,18 +306,12 @@ void *thread_R() {
                     }
                     //If the received message is out-of-window
                     else{
-                        printf("***************\n");
-                        printf("recvd data on sockfd %d, not in order and out of window, seq no %d\n", i, msg.header.seq_no);
-                        printf("***************\n");
                         //send the corresponding ACK for the message received (without storing the message in the buffer)
                         Message ack;
                         ack.header.msg_type = 'A';
                         ack.header.seq_no = (SM[i].recv_window.next_seq_no==1)? 15 : SM[i].recv_window.next_seq_no-1;
                         sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
                         sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
-                        printf("***************\n");
-                        printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
-                        printf("***************\n");
                         
                         if(sem_post(SM_mutex)==-1){
                             perror("sem_post");
@@ -354,9 +322,6 @@ void *thread_R() {
                 }
                 //If the received message is an ACK message
                 else if(msg.header.msg_type=='A'){
-                    printf("***************\n");
-                    printf("ack recvd on sockfd %d, seq no %d, window size %s\n", i, msg.header.seq_no, msg.msg);
-                    printf("***************\n");
                     //check if the sequence number of the ACK is in window
                     int idx = SM[i].send_window.window_start_index;
                     int ack_in_window = -1;
@@ -378,15 +343,9 @@ void *thread_R() {
                             SM[i].send_window.send_buff[new_idx].ack_no = -1;
                         }
                         SM[i].send_window.window_start_index = (ack_in_window+1)%SENDER_MSG_BUFFER;
-                        printf("***************\n");
-                        printf("sockfd %d swnd window start update to %d\n", i, SM[i].send_window.window_start_index);
-                        printf("***************\n");
                     }
                     //update the send window size as per the window size indicated by the ACK message
                     SM[i].send_window.window_size = atoi(msg.msg);
-                    printf("***************\n");
-                    printf("sockfd %d swnd window size update %d\n", i, SM[i].send_window.window_size);
-                    printf("***************\n");
 
                     //To handle the 'ACK with window size 0' deadlock situation... (by using the 'Persistence Timer' solution)
                     //if the window size is greater than 0, turn off the persistence timer
@@ -408,18 +367,12 @@ void *thread_R() {
                 }
                 //if the received message is PROBE message (sent when the persistence timer goes off)
                 else if(msg.header.msg_type=='P'){
-                    printf("***************\n");
-                    printf("probe recvd on sockfd %d, seq no %d\n", i, msg.header.seq_no);
-                    printf("***************\n");
                     //send the corresponding ACK with the current window size
                     Message ack;
                     ack.header.msg_type = 'A';
                     ack.header.seq_no = msg.header.seq_no;
                     sprintf(ack.msg, "%d", SM[i].recv_window.window_size);
                     sendto(SM[i].udp_socket_id, &ack, sizeof(Message), 0, (struct sockaddr*)&client_addr, addr_len);
-                    printf("***************\n");
-                    printf("ack sent, sockfd %d, seq no %d, window size %d\n", i, ack.header.seq_no, SM[i].recv_window.window_size);
-                    printf("***************\n");
                     
                     if(sem_post(SM_mutex)==-1){
                         perror("sem_post");
@@ -476,9 +429,6 @@ void *thread_S() {
                         addr = SM[i].destination_addr;
                         memset(probe_msg.msg, 0, sizeof(probe_msg.msg));
                         sendto(SM[i].udp_socket_id, &(probe_msg), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
-                        printf("***************\n");
-                        printf("sending probe msg: %d sockfd, %d seq no, %d flag\n", i, probe_msg.header.seq_no, persistence_timer[i].flag);
-                        printf("***************\n");
                         persistence_timer[i].last_time = time(NULL);
                         if(persistence_timer[i].flag <= 3) persistence_timer[i].flag++; //to maintain exponential backoff waiting time (within an upper limit)
                         continue;
@@ -492,9 +442,6 @@ void *thread_S() {
 
                     if(SM[i].send_window.send_buff[idx].sent == 0){
                         // Send the message if it hasn't been sent yet
-                        printf("***************\n");
-                        printf("sending: %d sockfd, %d idx\n", i, idx);
-                        printf("***************\n");
                         addr = SM[i].destination_addr;
                         sendto(SM[i].udp_socket_id, &(SM[i].send_window.send_buff[idx].message), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
                         num_messages++;
@@ -507,10 +454,7 @@ void *thread_S() {
                     time(&current_time);
                     double time_gap = difftime(current_time, SM[i].send_window.send_buff[idx].time);
                     if(time_gap >= T){
-                        // Resend the message
-                        printf("***************\n");
-                        printf("sending: %d sockfd, %d idx\n", i, idx);
-                        printf("***************\n");  
+                        // Resend the message  
                         addr = SM[i].destination_addr;
                         sendto(SM[i].udp_socket_id, &(SM[i].send_window.send_buff[idx].message), sizeof(Message), 0, (struct sockaddr *)&addr, sizeof(addr));
                         num_transmissions++;
@@ -557,9 +501,9 @@ void* thread_G(){
             if(errno==ESRCH){
                 close(SM[i].udp_socket_id);
                 SM[i].socket_alloted = 0;
-                printf("***************\n");
-                printf("socket %d closed from thread_G\n", i);
-                printf("***************\n");
+                printf("\n***************************\n");
+                printf("-> Socket %d closed by the garbage collector thread\n", i);
+                printf("***************************\n");
             }
         }
         // Release the mutex
@@ -691,9 +635,9 @@ int main() {
     }
 
     
-    printf("***************\n");
-    printf("init done\n");
-    printf("***************\n");
+    printf("\n***************************\n");
+    printf("initmsocket is initialized and running...\n");
+    printf("***************************\n");
 
     // Wait indefinitely to handle m_socket() and m_bind() calls
     while (1) {
@@ -717,7 +661,6 @@ int main() {
             }
         } else if (sock_info->sock_id != 0 && sock_info->port != 0) {
             // m_bind call
-            printf("in bind\n");
             struct sockaddr_in addr;
             memset(&addr, 0, sizeof(addr));
             addr.sin_family = AF_INET;
@@ -728,7 +671,6 @@ int main() {
                 sock_info->errno_val = errno;
                 sock_info->sock_id = -1; // Reset sock_id
             }
-            printf("bind done %d\n", ret);
             // Signal Sem2
             if (sem_post(Sem2) == -1) {
                 perror("sem_post");
