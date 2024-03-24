@@ -50,6 +50,7 @@ int main(int argc, char *argv[]){
     // Open or create file
     char filename[50];
     sprintf(filename, "%s_%hu.txt", inet_ntoa(src_addr.sin_addr), ntohs(src_addr.sin_port));
+
     file_descriptor = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (file_descriptor == -1) {
         printf("Error opening or creating the file.\n");
@@ -58,6 +59,7 @@ int main(int argc, char *argv[]){
     
     // Receive contents and write to file until termination block is received
     printf("User 2 (IP: %s, Port: %d) started receiving the file contents.\n", source_IP, source_port);
+    
     while (1) {
         memset(buff, 0, sizeof(buff));
         int addrlen = sizeof(dest_addr);
