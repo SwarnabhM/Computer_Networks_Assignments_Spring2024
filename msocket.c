@@ -487,12 +487,6 @@ int m_close(int sockfd) {
     MTPSocketEntry *SM = NULL; // Pointer to the shared memory MTPSocketEntry
     sem_t *SM_mutex = NULL; // Semaphore for mutual exclusion
 
-    // // Check if the provided socket file descriptor is valid
-    // if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS) {
-    //     errno = EBADF;  // Set errno to indicate bad file descriptor
-    //     return -1;
-    // }
-
     int shm_id;
     // Get the shared memory segment for MTPSocketEntry
     key_t key_SM = ftok("msocket.h", 'M');
