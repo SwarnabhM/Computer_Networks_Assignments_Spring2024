@@ -1,29 +1,41 @@
 #include "msocket.h"
 
 // Function to randomly drop a message based on probability p
-int dropMessage(float p) {
+int dropMessage(float p)
+{
     float rand_val = (float)rand() / RAND_MAX; // Generate a random value between 0 and 1
 
-    if (rand_val < p) {
+    if (rand_val < p)
+    {
         return 1; // Return true, message dropped
-    } else {
+    }
+    else
+    {
         return 0; // Return false, message not dropped
     }
 }
 
 // Function to clean up resources
-void cleanup(MTPSocketEntry *SM, SOCK_INFO *sock_info, sem_t *Sem1, sem_t *Sem2, sem_t *SM_mutex){
-    if (SM != NULL) shmdt(SM); // Detach shared memory segment for SM
-    if (sock_info != NULL) shmdt(sock_info); // Detach shared memory segment for sock_info
-    if (Sem1 != NULL) sem_close(Sem1); // Close semaphore Sem1
-    if (Sem2 != NULL) sem_close(Sem2); // Close semaphore Sem2
-    if (SM_mutex != NULL) sem_close(SM_mutex); // Close semaphore SM_mutex
+void cleanup(MTPSocketEntry *SM, SOCK_INFO *sock_info, sem_t *Sem1, sem_t *Sem2, sem_t *SM_mutex)
+{
+    if (SM != NULL)
+        shmdt(SM); // Detach shared memory segment for SM
+    if (sock_info != NULL)
+        shmdt(sock_info); // Detach shared memory segment for sock_info
+    if (Sem1 != NULL)
+        sem_close(Sem1); // Close semaphore Sem1
+    if (Sem2 != NULL)
+        sem_close(Sem2); // Close semaphore Sem2
+    if (SM_mutex != NULL)
+        sem_close(SM_mutex); // Close semaphore SM_mutex
 }
 
 // Function to open an MTP socket
-int m_socket(int domain, int type, int protocol) {
+int m_socket(int domain, int type, int protocol)
+{
     // Check if the domain is AF_INET or PF_INET, type is SOCK_MTP, and protocol is 0
-    if ((!(domain == AF_INET || domain == PF_INET)) || type != SOCK_MTP || protocol != 0) {
+    if ((!(domain == AF_INET || domain == PF_INET)) || type != SOCK_MTP || protocol != 0)
+    {
         // Set errno based on the error condition
         if (type != SOCK_MTP)
             errno = EPROTOTYPE;
@@ -45,14 +57,16 @@ int m_socket(int domain, int type, int protocol) {
     // Create key for shared memory SM table
     key_t key_SM = ftok("msocket.h", 'M');
     // Get shared memory segment for SM table
-    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
+    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror(" error in shmget at SM in m_socket");
         return -1;
     }
     // Attach shared memory segment for SM table
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
-    if (SM == (MTPSocketEntry *)(-1)) {
+    if (SM == (MTPSocketEntry *)(-1))
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror(" error in shmat at SM in m_socket");
         return -1;
@@ -61,13 +75,15 @@ int m_socket(int domain, int type, int protocol) {
     // Create key for shared memory SOCK_INFO
     key_t key_sockinfo = ftok("msocket.h", 'S');
     // Get shared memory segment for SOCK_INFO
-    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
+    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Attach shared memory segment for SOCK_INFO
     sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
-    if (sock_info == (SOCK_INFO *)(-1)) {
+    if (sock_info == (SOCK_INFO *)(-1))
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
@@ -75,42 +91,50 @@ int m_socket(int domain, int type, int protocol) {
 
     // Open semaphore Sem1
     Sem1 = sem_open("/Sem1", 0);
-    if (Sem1 == SEM_FAILED) {
+    if (Sem1 == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Open semaphore Sem2
     Sem2 = sem_open("/Sem2", 0);
-    if (Sem2 == SEM_FAILED) {
+    if (Sem2 == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Open semaphore SM_mutex
-    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Find a free entry in the shared memory
     int free_entry_index = -1;
-    if (sem_wait(SM_mutex) == -1) {
+    if (sem_wait(SM_mutex) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
-    for (int i = 0; i < MAX_MTP_SOCKETS; i++) {
-        if (SM[i].socket_alloted == 0) {
+    for (int i = 0; i < MAX_MTP_SOCKETS; i++)
+    {
+        if (SM[i].socket_alloted == 0)
+        {
             free_entry_index = i;
             break;
         }
     }
-    if (sem_post(SM_mutex) == -1) {
+    if (sem_post(SM_mutex) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Check if free entry available
-    if (free_entry_index == -1) {
+    if (free_entry_index == -1)
+    {
         // No free entry available, set errno and return
         errno = ENOBUFS;
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
@@ -118,24 +142,30 @@ int m_socket(int domain, int type, int protocol) {
     }
 
     // Signal Sem1
-    if (sem_post(Sem1) == -1) {
+    if (sem_post(Sem1) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Wait on Sem2
-    if (sem_wait(Sem2) == -1) {
+    if (sem_wait(Sem2) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Check SOCK_INFO for errors
-    if (sock_info->sock_id == -1) {
+    if (sock_info->sock_id == -1)
+    {
         errno = sock_info->errno_val;
         free_entry_index = -1;
-    } else {
+    }
+    else
+    {
         // Update SM table with socket information
-        if (sem_wait(SM_mutex) == -1) {
+        if (sem_wait(SM_mutex) == -1)
+        {
             cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
             return -1;
         }
@@ -153,14 +183,17 @@ int m_socket(int domain, int type, int protocol) {
         SM[free_entry_index].recv_window.window_size = 5;
         SM[free_entry_index].recv_window.index_to_write = 0;
         SM[free_entry_index].recv_window.nospace = 0;
-        for (int j = 0; j < SENDER_MSG_BUFFER; j++) {
+        for (int j = 0; j < SENDER_MSG_BUFFER; j++)
+        {
             SM[free_entry_index].send_window.send_buff[j].ack_no = -1;
             SM[free_entry_index].send_window.send_buff[j].sent = 0;
         }
-        for (int j = 0; j < RECEIVER_MSG_BUFFER; j++) {
+        for (int j = 0; j < RECEIVER_MSG_BUFFER; j++)
+        {
             SM[free_entry_index].recv_window.recv_buff[j].ack_no = -1;
         }
-        if (sem_post(SM_mutex) == -1) {
+        if (sem_post(SM_mutex) == -1)
+        {
             cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
             return -1;
         }
@@ -177,7 +210,8 @@ int m_socket(int domain, int type, int protocol) {
 }
 
 // Function to bind an MTP socket
-int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned long dest_ip, unsigned short dest_port) {
+int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned long dest_ip, unsigned short dest_port)
+{
     // Declare variables for shared memory, semaphores, and socket information
     int shm_id;
     MTPSocketEntry *SM = NULL;
@@ -189,13 +223,15 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
     // Create key for shared memory SM table
     key_t key_SM = ftok("msocket.h", 'M');
     // Get shared memory segment for SM table
-    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
+    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Attach shared memory segment for SM table
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
-    if (SM == (MTPSocketEntry *)(-1)) {
+    if (SM == (MTPSocketEntry *)(-1))
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
@@ -204,13 +240,15 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
     // Create key for shared memory SOCK_INFO
     key_t key_sockinfo = ftok("msocket.h", 'S');
     // Get shared memory segment for SOCK_INFO
-    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0) {
+    if ((shm_id = shmget(key_sockinfo, sizeof(SOCK_INFO), 0666)) < 0)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Attach shared memory segment for SOCK_INFO
     sock_info = (SOCK_INFO *)shmat(shm_id, NULL, 0);
-    if (sock_info == (SOCK_INFO *)(-1)) {
+    if (sock_info == (SOCK_INFO *)(-1))
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         perror("shmat");
         return -1;
@@ -218,28 +256,33 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
 
     // Open semaphore Sem1
     Sem1 = sem_open("/Sem1", 0);
-    if (Sem1 == SEM_FAILED) {
+    if (Sem1 == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Open semaphore Sem2
     Sem2 = sem_open("/Sem2", 0);
-    if (Sem2 == SEM_FAILED) {
+    if (Sem2 == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
     // Open semaphore SM_mutex
-    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Acquire SM_mutex before accessing shared memory
-    if (sem_wait(SM_mutex) == -1) {
+    if (sem_wait(SM_mutex) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
-    if(SM[sockfd].process_id != getpid()){
+    if (SM[sockfd].process_id != getpid())
+    {
         // Error if this socket was created by some other process
         errno = EBADF;
         sem_post(SM_mutex);
@@ -247,7 +290,8 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
         return -1;
     }
     // Release SM_mutex after accessing shared memory
-    if (sem_post(SM_mutex) == -1) {
+    if (sem_post(SM_mutex) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
@@ -258,36 +302,43 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
     sock_info->port = src_port;
 
     // Signal Sem1
-    if (sem_post(Sem1) == -1) {
+    if (sem_post(Sem1) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     // Wait on Sem2
-    if (sem_wait(Sem2) == -1) {
+    if (sem_wait(Sem2) == -1)
+    {
         cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
         return -1;
     }
 
     int success = 0;
     // Check SOCK_INFO for errors
-    if (sock_info->sock_id == -1) {
+    if (sock_info->sock_id == -1)
+    {
         errno = sock_info->errno_val;
         success = -1;
-    } else {
+    }
+    else
+    {
         // Update SM table with destination address
         struct sockaddr_in dest_addr;
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = dest_port;
         dest_addr.sin_addr.s_addr = dest_ip;
         // Acquire SM_mutex before updating shared memory
-        if (sem_wait(SM_mutex) == -1) {
+        if (sem_wait(SM_mutex) == -1)
+        {
             cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
             return -1;
         }
         SM[sockfd].destination_addr = dest_addr;
         // Release SM_mutex after updating shared memory
-        if (sem_post(SM_mutex) == -1) {
+        if (sem_post(SM_mutex) == -1)
+        {
             cleanup(SM, sock_info, Sem1, Sem2, SM_mutex);
             return -1;
         }
@@ -303,7 +354,8 @@ int m_bind(int sockfd, unsigned long src_ip, unsigned short src_port, unsigned l
 }
 
 // Function to send data over an MTP socket
-ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_address, socklen_t addrlen){
+ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_address, socklen_t addrlen)
+{
     // Casting destination address to sockaddr_in
     struct sockaddr_in *dest_addr = (struct sockaddr_in *)dest_address;
 
@@ -314,32 +366,37 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
     // Get shared memory segment for MTPSocketEntry
     key_t key_SM = ftok("msocket.h", 'M');
     int shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666);
-    if (shm_id == -1) {
+    if (shm_id == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
-    if (SM == (MTPSocketEntry *)(-1)) {
+    if (SM == (MTPSocketEntry *)(-1))
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         perror("shmat");
         return -1;
     }
 
     // Open mutex
-    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Acquire mutex lock
-    if (sem_wait(SM_mutex) == -1) {
+    if (sem_wait(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Check if socket descriptor is valid and belongs to the current process
-    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid()) {
-        errno = EBADF; // Bad file descriptor
+    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid())
+    {
+        errno = EBADF;      // Bad file descriptor
         sem_post(SM_mutex); // Release the lock
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
@@ -347,7 +404,8 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
 
     // Check if the destination address matches the bound address
     if (!(dest_addr->sin_addr.s_addr == SM[sockfd].destination_addr.sin_addr.s_addr &&
-          dest_addr->sin_port == SM[sockfd].destination_addr.sin_port)) {
+          dest_addr->sin_port == SM[sockfd].destination_addr.sin_port))
+    {
         errno = ENOTCONN;
         sem_post(SM_mutex); // Release the lock
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
@@ -357,16 +415,19 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
     // Find a free index in the sender message buffer
     int free_index = -1;
     int idx = SM[sockfd].send_window.window_start_index;
-    for (int i = 0; i < SENDER_MSG_BUFFER; i++) {
+    for (int i = 0; i < SENDER_MSG_BUFFER; i++)
+    {
         int new_idx = (idx + i) % SENDER_MSG_BUFFER;
-        if (SM[sockfd].send_window.send_buff[new_idx].ack_no == -1) {
+        if (SM[sockfd].send_window.send_buff[new_idx].ack_no == -1)
+        {
             free_index = new_idx;
             break;
         }
     }
 
     // If no free index is found, return error
-    if (free_index == -1) {
+    if (free_index == -1)
+    {
         errno = ENOBUFS;
         sem_post(SM_mutex);
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
@@ -375,7 +436,8 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
 
     // Update sender window information and copy message data
     SM[sockfd].send_window.last_seq_no = (SM[sockfd].send_window.last_seq_no + 1) % 16;
-    if (SM[sockfd].send_window.last_seq_no == 0) SM[sockfd].send_window.last_seq_no++;
+    if (SM[sockfd].send_window.last_seq_no == 0)
+        SM[sockfd].send_window.last_seq_no++;
 
     SM[sockfd].send_window.send_buff[free_index].ack_no = SM[sockfd].send_window.last_seq_no;
     SM[sockfd].send_window.send_buff[free_index].time = time(NULL);
@@ -386,7 +448,8 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
     SM[sockfd].send_window.send_buff[free_index].sent = 0;
 
     // Release mutex lock
-    if (sem_post(SM_mutex) == -1) {
+    if (sem_post(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
@@ -398,7 +461,8 @@ ssize_t m_sendto(int sockfd, const void *buf, size_t len, int flags, const struc
 }
 
 // Function to receive data from an MTP socket
-ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
+ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen)
+{
     // Declare variables for shared memory and semaphore
     MTPSocketEntry *SM = NULL;
     sem_t *SM_mutex = NULL;
@@ -406,34 +470,39 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
     // Get shared memory segment for SM table
     key_t key_SM = ftok("msocket.h", 'M');
     int shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666);
-    if (shm_id == -1) {
+    if (shm_id == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         perror("shmget");
         return -1;
     }
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
-    if (SM == (MTPSocketEntry *)(-1)) {
+    if (SM == (MTPSocketEntry *)(-1))
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         perror("shmat");
         return -1;
     }
 
     // Open semaphore SM_mutex
-    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         perror("sem_open");
         return -1;
     }
 
     // Acquire lock
-    if (sem_wait(SM_mutex) == -1) {
+    if (sem_wait(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Check validity of sockfd
-    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid()) {
-        errno = EBADF; // Bad file descriptor
+    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid())
+    {
+        errno = EBADF;      // Bad file descriptor
         sem_post(SM_mutex); // Release the lock
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
@@ -442,8 +511,9 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
     int idx = SM[sockfd].recv_window.index_to_read;
 
     // Check if there's a message available in the receive buffer
-    if (SM[sockfd].recv_window.recv_buff[idx].ack_no == -1) {
-        errno = ENOMSG; // No message available
+    if (SM[sockfd].recv_window.recv_buff[idx].ack_no == -1)
+    {
+        errno = ENOMSG;     // No message available
         sem_post(SM_mutex); // Release the lock
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
@@ -454,12 +524,14 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
     memcpy(buf, SM[sockfd].recv_window.recv_buff[idx].message, copy_len);
 
     // Update source address if provided
-    if (src_addr != NULL) {
+    if (src_addr != NULL)
+    {
         memcpy(src_addr, &(SM[sockfd].destination_addr), sizeof(struct sockaddr_in));
     }
 
     // Update addrlen if provided
-    if (addrlen != NULL) {
+    if (addrlen != NULL)
+    {
         *addrlen = sizeof(struct sockaddr_in);
     }
 
@@ -470,7 +542,8 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
     SM[sockfd].recv_window.window_size++;
 
     // Release the lock
-    if (sem_post(SM_mutex) == -1) {
+    if (sem_post(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
@@ -483,39 +556,45 @@ ssize_t m_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr
 }
 
 // Function to close an MTP socket
-int m_close(int sockfd) {
+int m_close(int sockfd)
+{
     MTPSocketEntry *SM = NULL; // Pointer to the shared memory MTPSocketEntry
-    sem_t *SM_mutex = NULL; // Semaphore for mutual exclusion
+    sem_t *SM_mutex = NULL;    // Semaphore for mutual exclusion
 
     int shm_id;
     // Get the shared memory segment for MTPSocketEntry
     key_t key_SM = ftok("msocket.h", 'M');
-    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0) {
+    if ((shm_id = shmget(key_SM, MAX_MTP_SOCKETS * sizeof(MTPSocketEntry), 0666)) < 0)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
     // Attach the shared memory segment
     SM = (MTPSocketEntry *)shmat(shm_id, NULL, 0);
-    if (SM == (MTPSocketEntry *)(-1)) {
+    if (SM == (MTPSocketEntry *)(-1))
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Open the semaphore for mutual exclusion
-    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED) {
+    if ((SM_mutex = sem_open("/SM_mutex", 0)) == SEM_FAILED)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Lock the shared memory for mutual exclusion
-    if (sem_wait(SM_mutex) == -1) {
+    if (sem_wait(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }
 
     // Check if the socket is allocated and belongs to the current process
-    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid()) {
-        errno = EBADF; // Set errno to indicate bad file descriptor
+    if (sockfd < 0 || sockfd >= MAX_MTP_SOCKETS || SM[sockfd].socket_alloted == 0 || SM[sockfd].process_id != getpid())
+    {
+        errno = EBADF;      // Set errno to indicate bad file descriptor
         sem_post(SM_mutex); // Release the lock
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
@@ -525,7 +604,8 @@ int m_close(int sockfd) {
     SM[sockfd].socket_alloted = 0;
 
     // Unlock the shared memory
-    if (sem_post(SM_mutex) == -1) {
+    if (sem_post(SM_mutex) == -1)
+    {
         cleanup(SM, NULL, NULL, NULL, SM_mutex);
         return -1;
     }

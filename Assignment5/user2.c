@@ -64,6 +64,7 @@ int main(int argc, char *argv[]){
         memset(buff, 0, sizeof(buff));
         int addrlen = sizeof(dest_addr);
         // Receive data
+        // use select() instead ? Not possible since sockfd is not an actual socket descriptor
         while((bytes_received = m_recvfrom(sockfd, buff, sizeof(buff), 0, (struct sockaddr*)&dest_addr, (socklen_t *)&addrlen)) < 0){
             if(errno == ENOMSG)continue; // If no message is available yet, continue waiting
             else{
