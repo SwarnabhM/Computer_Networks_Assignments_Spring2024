@@ -28,6 +28,7 @@ To run the assignment:
 - **server.c**: Source code for the TCP server.
 - **client.c**: Source code for the TCP client.
 - **README.md**: This README file providing an overview of the assignment.
+- **Test Files**: Contains text files for testing correctness of the code.
 
 ## Requirements
 
