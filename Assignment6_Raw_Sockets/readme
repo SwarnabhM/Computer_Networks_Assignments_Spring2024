@@ -1,0 +1,30 @@
+Changes to be made before running:
+    simDNSClient.c:
+        --->Change the LOCAL_IP and DESTINATION_IP macros to the client's and server's IP respectively
+        --->Change the INTERFACE macro acccordingly
+
+    simDNSServer.c:
+        --->Change the INTERFACE macro accordingly
+        --->Change the SOURCE_MAC macro accrodingly
+        --->Change the macros LOCAL_IP_ADDRESS to the corresponding IP address being used
+
+
+
+***
+now, RUN 'make all' commmand
+***
+
+To run server:
+---> run the executable 'sudo ./server'
+
+
+To run client:
+
+--->When running the executable file provide Source MAC and Destination MAC as command line arguments  (in the same order as written in readme)
+
+---> run the executable 'sudo ./client <source_MAC_address> <dest_MAC_address>'
+
+--->provide query in the format given in the prompt message that is displayed 
+
+--->also make sure that server is running before sending the query
+
